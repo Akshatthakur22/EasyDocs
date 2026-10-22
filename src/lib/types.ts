@@ -11,6 +11,10 @@ export interface PositionedField {
   size: number;
   color: string;
   align: "left" | "center" | "right";
+  fontFamily?: "Helvetica" | "TimesRoman" | "Courier";
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
 }
 
 export interface DataRow {

@@ -162,6 +162,9 @@ h1 { font-family:Inter,ui-sans-serif,system-ui,sans-serif; font-size:clamp(32px,
   .template-designer { grid-template-columns:1fr !important; min-height:auto !important; }
   .template-designer > aside:first-child { border-right:0 !important; border-bottom:1px solid #e5e9e3; }
   .template-designer > aside:last-child { border-left:0 !important; border-top:1px solid #e5e9e3; }
+  .template-designer-expanded { min-height:0 !important; }
+  .template-designer-expanded > aside:first-child,.template-designer-expanded > aside:last-child { max-height:18vh; overflow:auto; }
+  .template-designer-expanded > div:nth-child(2) { min-height:0; }
   .page-wrap { padding:38px 20px 55px; }
   .workspace { grid-template-columns:1fr; }
   .rail { position:static; display:flex; gap:4px; overflow:auto; padding:8px; }

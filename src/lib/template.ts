@@ -1,6 +1,6 @@
 import Docxtemplater from "docxtemplater";
 import PizZip from "pizzip";
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 import type { PositionedField, TemplateFormat } from "@/lib/types";
 import type { TemplateInspection } from "@/lib/types";
 
@@ -78,24 +78,47 @@ export async function renderPositionedTemplate(template: Blob, format: TemplateF
     pdf.addPage([image.width, image.height]).drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
   }
   if (!pdf.getPageCount()) throw new Error("The selected template has no printable pages.");
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
   for (const field of fields) {
     const page = pdf.getPage(Math.min(Math.max(0, field.page), pdf.getPageCount() - 1));
     const value = String(values[field.id] ?? "");
     if (!value) continue;
-    const fontSize = Math.max(4, field.size * page.getWidth());
+    const family = field.fontFamily ?? "Helvetica";
+    const fontName = family === "TimesRoman"
+      ? (field.bold ? (field.italic ? StandardFonts.TimesRomanBoldItalic : StandardFonts.TimesRomanBold) : (field.italic ? StandardFonts.TimesRomanItalic : StandardFonts.TimesRoman))
+      : family === "Courier"
+        ? (field.bold ? (field.italic ? StandardFonts.CourierBoldOblique : StandardFonts.CourierBold) : (field.italic ? StandardFonts.CourierOblique : StandardFonts.Courier))
+        : (field.bold ? (field.italic ? StandardFonts.HelveticaBoldOblique : StandardFonts.HelveticaBold) : (field.italic ? StandardFonts.HelveticaOblique : StandardFonts.Helvetica));
+    const font = await pdf.embedFont(fontName);
+    const crop = page.getCropBox();
+    const rotation = ((page.getRotation().angle % 360) + 360) % 360;
+    const displayWidth = rotation === 90 || rotation === 270 ? crop.height : crop.width;
+    const displayHeight = rotation === 90 || rotation === 270 ? crop.width : crop.height;
+    const fontSize = Math.max(4, field.size * displayWidth);
     const width = font.widthOfTextAtSize(value, fontSize);
-    const anchor = field.x * page.getWidth();
-    const x = field.align === "center" ? anchor - width / 2 : field.align === "right" ? anchor - width : anchor;
+    const anchor = field.x * displayWidth;
+    const displayX = field.align === "center" ? anchor - width / 2 : field.align === "right" ? anchor - width : anchor;
+    const ascent = font.heightAtSize(fontSize, { descender: false });
+    const baselineFromTop = field.y * displayHeight + ascent;
+    const toPdfPoint = (x: number, yFromTop: number) => {
+      if (rotation === 90) return { x: crop.x + yFromTop, y: crop.y + x };
+      if (rotation === 180) return { x: crop.x + crop.width - x, y: crop.y + yFromTop };
+      if (rotation === 270) return { x: crop.x + crop.width - yFromTop, y: crop.y + crop.height - x };
+      return { x: crop.x + x, y: crop.y + crop.height - yFromTop };
+    };
+    const origin = toPdfPoint(displayX, baselineFromTop);
     const [r, g, b] = [1, 3, 5].map((offset) => parseInt(field.color.slice(offset, offset + 2), 16) / 255);
     page.drawText(value, {
-      x: Math.max(0, x),
-      y: page.getHeight() * (1 - field.y) - fontSize * 0.82,
+      x: origin.x,
+      y: origin.y,
       size: fontSize,
       font,
       color: rgb(r, g, b),
-      maxWidth: Math.max(16, page.getWidth() - Math.max(0, x) - 8),
+      rotate: degrees(rotation),
     });
+    if (field.underline) {
+      const lineY = baselineFromTop + Math.max(0.8, fontSize * 0.06);
+      page.drawLine({ start: toPdfPoint(displayX, lineY), end: toPdfPoint(displayX + width, lineY), thickness: Math.max(0.5, fontSize * 0.04), color: rgb(r, g, b) });
+    }
   }
   return new Blob([new Uint8Array(await pdf.save())], { type: "application/pdf" });
 }

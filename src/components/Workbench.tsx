@@ -292,8 +292,15 @@ export default function Workbench() {
   const addPositionedField = useCallback((column: string, page: number) => {
     const fields = batch.fields ?? [];
     const offset = fields.length % 7;
-    const field: PositionedField = { id: createId(), column, page, x: 0.12, y: Math.min(0.88, 0.14 + offset * 0.075), size: 0.025, color: "#202622", align: "left" };
+    const field: PositionedField = { id: createId(), column, page, x: 0.12, y: Math.min(0.88, 0.14 + offset * 0.075), size: 0.025, color: "#202622", align: "left", fontFamily: "Helvetica", bold: false, italic: false };
     void saveDesign([...fields, field]);
+  }, [batch.fields, saveDesign]);
+
+  const duplicatePositionedField = useCallback((id: string) => {
+    const source = (batch.fields ?? []).find((field) => field.id === id);
+    if (!source) return;
+    const copy = { ...source, id: createId(), x: Math.min(0.98, source.x + 0.025), y: Math.min(0.98, source.y + 0.025) };
+    void saveDesign([...(batch.fields ?? []), copy]);
   }, [batch.fields, saveDesign]);
 
   const updatePositionedField = useCallback((id: string, update: Partial<PositionedField>) => {
@@ -663,7 +670,7 @@ export default function Workbench() {
                 <div className="card-head"><div><div className="step-kicker">03 — Design and map</div><h2>Place your data on the page</h2><p>Add a spreadsheet column, drag it onto the preview, and adjust its position, size, color, and alignment.</p></div><span className="format-badge"><Sparkles size={13} /> {batch.fields.length} placed</span></div>
                 <div className="card-body">
                   {!hasTemplate && <div className="notice error"><CircleAlert size={15} /><span>Choose a supported document template before mapping spreadsheet fields.</span></div>}
-                  {templateBlob && (batch.templateFormat === "image" || batch.templateFormat === "pdf") && <TemplateDesigner template={templateBlob} format={batch.templateFormat} headers={batch.headers} fields={batch.fields} sample={Object.fromEntries(batch.fields.map((field) => [field.id, getRowValue((rows.find((row) => row.included) ?? rows[0])?.values ?? {}, batch.mapping[field.id])]))} onAdd={addPositionedField} onUpdate={updatePositionedField} onRemove={removePositionedField} />}
+                  {templateBlob && (batch.templateFormat === "image" || batch.templateFormat === "pdf") && <TemplateDesigner template={templateBlob} format={batch.templateFormat} headers={batch.headers} fields={batch.fields} sample={Object.fromEntries(batch.fields.map((field) => [field.id, getRowValue((rows.find((row) => row.included) ?? rows[0])?.values ?? {}, batch.mapping[field.id])]))} onAdd={addPositionedField} onUpdate={updatePositionedField} onRemove={removePositionedField} onDuplicate={duplicatePositionedField} />}
                   {batch.datasetWarnings.map((warning) => <div className="notice warn" key={warning} style={{ marginTop: 10 }}><CircleAlert size={14} /><span>{warning}</span></div>)}
                   <div className="validation-summary"><Stat label="Records" value={counts.total} /><Stat label="Ready to generate" value={counts.valid} /><Stat label="Need attention" value={invalidRowIds.size} color={invalidRowIds.size ? "#a25243" : undefined} /><Stat label="Excluded" value={counts.excluded} /></div>
                   {hasUnexcludedInvalid && !mappedMissing.length && <div className="notice warn"><CircleAlert size={14} /><span>{invalidRowIds.size} included row{invalidRowIds.size === 1 ? "" : "s"} are missing required values. Exclude them below or correct the spreadsheet and re-import.</span></div>}
