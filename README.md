@@ -11,7 +11,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`. A sample attendance letter and sample CSV are linked in the upload steps.
+Open `http://localhost:3000` for the product overview, or go directly to `http://localhost:3000/app` to create a batch. A sample attendance letter and sample CSV are linked in the upload steps.
 
 ## Workflow and formats
 

@@ -1,5 +1,5 @@
-import Workbench from "@/components/Workbench";
+import { LandingPage } from "@/components/PublicSite";
 
 export default function Home() {
-  return <Workbench />;
+  return <LandingPage />;
 }

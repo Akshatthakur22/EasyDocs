@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "EasyDocs — Bulk document automation",
-  description: "Turn a Word template and a spreadsheet into accurate, personalized documents. Files stay on your device.",
+  title: "EasyDocs — Documents, created in bulk",
+  description: "Turn a document and spreadsheet into personalized, print-ready PDFs with EasyDocs.",
   applicationName: "EasyDocs",
   icons: { icon: "/icon.svg" },
 };

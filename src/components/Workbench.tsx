@@ -1,12 +1,13 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import JSZip from "jszip";
 import { PDFDocument } from "pdf-lib";
 import TemplateDesigner from "@/components/TemplateDesigner";
 import {
   ArrowLeft, ArrowRight, Check, CheckCircle2, CircleAlert,
-  CloudOff, FileArchive, FileCheck2, FileSpreadsheet, FileText, FolderOpen,
+  FileArchive, FileCheck2, FileSpreadsheet, FileText, FolderOpen,
   LoaderCircle, LockKeyhole, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Trash2,
   Upload, X, XCircle
 } from "lucide-react";
@@ -19,8 +20,9 @@ import { createId, MAX_BATCH_ROWS, type Batch, type DataRow, type ImportResult, 
 const STEPS = [
   { title: "Template", caption: "Choose a document" },
   { title: "Your data", caption: "Import a spreadsheet" },
-  { title: "Map fields", caption: "Connect the columns" },
-  { title: "Review & create", caption: "Preview and export" },
+  { title: "Place fields", caption: "Design the page" },
+  { title: "Review", caption: "Check records" },
+  { title: "Generate", caption: "Create and export" },
 ];
 
 function freshBatch(templateId: string | null = null): Batch {
@@ -92,9 +94,19 @@ export default function Workbench() {
   const [draggingData, setDraggingData] = useState(false);
   const [showAllRows, setShowAllRows] = useState(false);
   const [recentTemplatePage, setRecentTemplatePage] = useState(false);
+  const [designCanUndo, setDesignCanUndo] = useState(false);
+  const [designCanRedo, setDesignCanRedo] = useState(false);
   const templateInput = useRef<HTMLInputElement>(null);
   const dataInput = useRef<HTMLInputElement>(null);
   const cancelRef = useRef(false);
+  const designUndoRef = useRef<PositionedField[][]>([]);
+  const designRedoRef = useRef<PositionedField[][]>([]);
+  const designHistoryBatchRef = useRef(batch.id);
+
+  const syncDesignHistory = useCallback(() => {
+    setDesignCanUndo(designUndoRef.current.length > 0);
+    setDesignCanRedo(designRedoRef.current.length > 0);
+  }, []);
 
   const say = useCallback((message: string) => {
     setToast(message);
@@ -125,7 +137,8 @@ export default function Workbench() {
             setRows(recoveredRows);
             setTemplateBlob(template?.blob ?? null);
             setTemplateName(template?.name ?? "");
-            setStep(lastBatch.status === "draft" && !lastBatch.rowCount ? (template ? 2 : 1) : lastBatch.rowCount ? 3 : 1);
+            const hasGenerationState = ["generating", "partial", "complete", "failed"].includes(saved.batch.status);
+            setStep(hasGenerationState ? 5 : recoveredRows.length ? (recoveredBatch.fields.length ? 4 : 3) : template ? 2 : 1);
             if (recoveredRows.some((row) => row.status === "processing")) {
               await persistBatch(recoveredBatch, recoveredRows);
               say("Your batch was recovered. Completed files are still saved.");
@@ -163,7 +176,8 @@ export default function Workbench() {
   const canMap = hasTemplate && rows.length > 0 && batch.fields.length > 0 && !unsupported.length && !mappedMissing.length;
   const hasUnexcludedInvalid = invalidRowIds.size > 0;
   const canGenerate = canMap && validRows.length > 0 && !hasUnexcludedInvalid && !generating;
-  const allDone = counts.completed + counts.failed >= rows.filter((row) => row.included).length && !generating && counts.completed > 0;
+  const includedRows = rows.filter((row) => row.included).length;
+  const allDone = includedRows > 0 && counts.completed + counts.failed >= includedRows && !generating;
 
   const commitBatch = useCallback(async (nextBatch: Batch, nextRows: DataRow[]) => {
     setBatch(nextBatch);
@@ -192,6 +206,12 @@ export default function Workbench() {
       const fields = template.fields ?? [];
       const mapping = Object.fromEntries(fields.map((field) => [field.id, field.column]));
       const nextRows = template.id === batch.templateId ? rows : clearRowOutputs(rows);
+      if (template.id !== batch.templateId) {
+        designUndoRef.current = [];
+        designRedoRef.current = [];
+        designHistoryBatchRef.current = batch.id;
+        syncDesignHistory();
+      }
       const nextBatch = {
         ...batch,
         updatedAt: Date.now(), status: "draft" as const, templateId: template.id,
@@ -213,7 +233,7 @@ export default function Workbench() {
     } finally {
       setBusy(false);
     }
-  }, [batch, commitBatch, rows]);
+  }, [batch, commitBatch, rows, syncDesignHistory]);
 
   const addTemplate = useCallback(async (file: File) => {
     setBusy(true);
@@ -242,6 +262,10 @@ export default function Workbench() {
       }
       const template: SavedTemplate = { id: createId(), name: file.name, size: normalizedFile.size, updatedAt: Date.now(), blob: normalizedFile, placeholders: [], fields: [], format, originalFormat: extension };
       await db.templates.put(template);
+      designUndoRef.current = [];
+      designRedoRef.current = [];
+      designHistoryBatchRef.current = batch.id;
+      syncDesignHistory();
       const nextRows = clearRowOutputs(rows);
       const nextBatch = {
         ...batch,
@@ -262,7 +286,7 @@ export default function Workbench() {
     } finally {
       setBusy(false);
     }
-  }, [batch, commitBatch, refreshTemplates, rows, say]);
+  }, [batch, commitBatch, refreshTemplates, rows, say, syncDesignHistory]);
 
   const applyDataset = useCallback(async (file: File, imported: ImportResult, sourceType: "csv" | "xlsx") => {
     const nextRows: DataRow[] = imported.rows.map((values, index) => ({ id: index + 1, values, included: true, status: "pending" }));
@@ -277,30 +301,73 @@ export default function Workbench() {
     setPreviewError("");
     setPreviewRowId(null);
     await commitBatch(nextBatch, nextRows);
-    setStep(batch.templateId ? 3 : 1);
+    setStep(2);
     say(`${nextRows.length} rows imported${imported.sheetName ? ` from ${imported.sheetName}` : ""}.`);
   }, [batch, commitBatch, say]);
 
-  const saveDesign = useCallback(async (fields: PositionedField[]) => {
+  const saveDesign = useCallback(async (fields: PositionedField[], recordHistory = true) => {
+    if (designHistoryBatchRef.current !== batch.id) {
+      designUndoRef.current = [];
+      designRedoRef.current = [];
+      designHistoryBatchRef.current = batch.id;
+    }
+    if (recordHistory) {
+      designUndoRef.current.push(batch.fields.map((field) => ({ ...field })));
+      if (designUndoRef.current.length > 100) designUndoRef.current.shift();
+      designRedoRef.current = [];
+    }
+    syncDesignHistory();
     const placeholders = fields.map((field) => field.id);
     const mapping = Object.fromEntries(fields.map((field) => [field.id, field.column]));
     const nextBatch = { ...batch, fields, placeholders, mapping, updatedAt: Date.now(), status: "draft" as const };
     await commitBatch(nextBatch, clearRowOutputs(rows));
     if (batch.templateId) await db.templates.update(batch.templateId, { fields, placeholders });
-  }, [batch, commitBatch, rows]);
+  }, [batch, commitBatch, rows, syncDesignHistory]);
+
+  const undoDesign = useCallback(async () => {
+    if (designHistoryBatchRef.current !== batch.id) {
+      designUndoRef.current = [];
+      designRedoRef.current = [];
+      designHistoryBatchRef.current = batch.id;
+      syncDesignHistory();
+      return;
+    }
+    const previous = designUndoRef.current.pop();
+    if (!previous) return;
+    designRedoRef.current.push(batch.fields.map((field) => ({ ...field })));
+    syncDesignHistory();
+    await saveDesign(previous, false);
+  }, [batch.id, batch.fields, saveDesign, syncDesignHistory]);
+
+  const redoDesign = useCallback(async () => {
+    if (designHistoryBatchRef.current !== batch.id) {
+      designUndoRef.current = [];
+      designRedoRef.current = [];
+      designHistoryBatchRef.current = batch.id;
+      syncDesignHistory();
+      return;
+    }
+    const next = designRedoRef.current.pop();
+    if (!next) return;
+    designUndoRef.current.push(batch.fields.map((field) => ({ ...field })));
+    syncDesignHistory();
+    await saveDesign(next, false);
+  }, [batch.id, batch.fields, saveDesign, syncDesignHistory]);
 
   const addPositionedField = useCallback((column: string, page: number) => {
     const fields = batch.fields ?? [];
     const offset = fields.length % 7;
     const field: PositionedField = { id: createId(), column, page, x: 0.12, y: Math.min(0.88, 0.14 + offset * 0.075), size: 0.025, color: "#202622", align: "left", fontFamily: "Helvetica", bold: false, italic: false };
     void saveDesign([...fields, field]);
+    return field.id;
   }, [batch.fields, saveDesign]);
 
   const duplicatePositionedField = useCallback((id: string) => {
     const source = (batch.fields ?? []).find((field) => field.id === id);
-    if (!source) return;
+    if (!source) return undefined;
     const copy = { ...source, id: createId(), x: Math.min(0.98, source.x + 0.025), y: Math.min(0.98, source.y + 0.025) };
     void saveDesign([...(batch.fields ?? []), copy]);
+    return copy.id;
   }, [batch.fields, saveDesign]);
 
   const updatePositionedField = useCallback((id: string, update: Partial<PositionedField>) => {
@@ -565,173 +632,155 @@ export default function Workbench() {
   };
 
   const pageTitle = recentTemplatePage ? "Your template library" : STEPS[step - 1].title;
+  const reviewColumns = [...new Set([...batch.headers.slice(0, 4), ...batch.fields.map((field) => batch.mapping[field.id]).filter((value): value is string => Boolean(value))])];
   const continueTo = () => {
     if (step === 1 && hasTemplate) setStep(2);
-    else if (step === 2 && rows.length) setStep(3);
-    else if (step === 3 && canMap && !hasUnexcludedInvalid) setStep(4);
+    else if (step === 2 && rows.length) setStep(hasTemplate ? 3 : 1);
+    else if (step === 3 && canMap) setStep(4);
+    else if (step === 4 && canMap && validRows.length > 0 && !hasUnexcludedInvalid) setStep(5);
   };
   const chooseStep = (target: number) => {
     if (target < step) setStep(target);
     else if (target === 2 && hasTemplate) setStep(2);
-    else if (target === 3 && rows.length) setStep(3);
-    else if (target === 4 && canMap && !hasUnexcludedInvalid) setStep(4);
+    else if (target === 3 && hasTemplate && rows.length) setStep(3);
+    else if (target === 4 && canMap) setStep(4);
+    else if (target === 5 && canMap && validRows.length > 0 && !hasUnexcludedInvalid) setStep(5);
   };
 
   if (!loaded) return <div className="loading-screen"><div className="loading-brand">EasyDocs</div><LoaderCircle className="spin" size={22} /></div>;
 
   return (
-    <main className="shell">
-      <header className="topbar">
-        <a className="brand" href="#" aria-label="EasyDocs home">
-          <span className="brand-mark"><FileText size={19} strokeWidth={2.2} /></span>
+    <main className="app-shell">
+      <header className="app-topbar">
+        <Link className="brand" href="/" aria-label="EasyDocs home">
+          <span className="brand-mark"><FileText size={18} strokeWidth={2.2} /></span>
           <span className="brand-name">easy<span>docs</span></span>
-        </a>
-        <div className="top-actions">
-          <div className="privacy-chip" title="Your documents and spreadsheet stay in this browser."><LockKeyhole size={14} /><span>Files stay on this device</span></div>
+        </Link>
+        <div className="app-top-actions">
+          <Link className="privacy-chip" href="/privacy" title="Templates, rows, and generated files are stored locally in this browser."><LockKeyhole size={14} /><span>Stored in this browser</span></Link>
           <button className="quiet-button" onClick={() => void newBatch()}><Plus size={15} /> New batch</button>
           <button className="quiet-button" onClick={() => setRecentTemplatePage((value) => !value)}><FolderOpen size={15} /> <span className="library-label">Templates</span></button>
         </div>
       </header>
 
-      <div className="page-wrap">
-        <div className="intro-row">
-          <div>
-            <div className="eyebrow">A calmer way to make documents</div>
-            <h1>One template.<br />A whole lot less busywork.</h1>
-            <p className="intro-copy">Bring a document and a spreadsheet together. Place each value on the page, review a real record, then make print-ready copies.</p>
-          </div>
-          <div className="intro-aside"><ShieldCheck size={20} /><span>Your files stay in your browser. No account, no upload, no cloud document storage.</span></div>
+      <div className={`app-content${recentTemplatePage ? " library-mode" : ""}`}>
+        <div className="app-heading">
+          <div><span className="eyebrow">YOUR WORKSPACE</span><h1>{recentTemplatePage ? pageTitle : "Create a batch"}</h1><p>{recentTemplatePage ? "Reuse a saved template with a new spreadsheet." : "Follow the steps to prepare, review, and create your documents."}</p></div>
+          {!recentTemplatePage && <span className="batch-save-state"><ShieldCheck size={15} /> Local browser workspace</span>}
         </div>
 
-        <div className="workspace">
-          <aside className="rail" aria-label="Batch workflow">
-            <div className="rail-label">Your batch</div>
-            {STEPS.map((item, index) => {
-              const number = index + 1;
-              const done = (number === 1 && hasTemplate) || (number === 2 && rows.length > 0) || (number === 3 && canMap) || (number === 4 && allDone);
-              const accessible = number < step || (number === 2 && hasTemplate) || (number === 3 && rows.length > 0) || (number === 4 && canMap && !hasUnexcludedInvalid);
-              return <button key={item.title} className={`step-item ${step === number ? "active" : ""} ${done ? "done" : ""}`} disabled={!accessible && number !== step || generating} onClick={() => chooseStep(number)}>
-                <span className="step-number">{done && step !== number ? <Check size={14} /> : number}</span>
-                <span><span className="step-label">{item.title}</span><span className="step-caption">{item.caption}</span></span>
-              </button>;
-            })}
-            <div className="rail-bottom"><strong>Private by default</strong><br />Templates, rows, and generated files are saved locally in this browser and expire after 7 days.</div>
-          </aside>
+        {!recentTemplatePage && <nav className="workflow-steps" aria-label="Batch progress">
+          {STEPS.map((item, index) => {
+            const number = index + 1;
+            const done = (number === 1 && hasTemplate) || (number === 2 && rows.length > 0) || (number === 3 && canMap) || (number === 4 && canMap && validRows.length > 0 && !hasUnexcludedInvalid) || (number === 5 && allDone);
+            const accessible = number < step || number === 1 || (number === 2 && hasTemplate) || (number === 3 && hasTemplate && rows.length > 0) || (number === 4 && canMap) || (number === 5 && canMap && validRows.length > 0 && !hasUnexcludedInvalid);
+            return <button key={item.title} className={`workflow-step ${step === number ? "active" : ""} ${done && step !== number ? "done" : ""}`} disabled={!accessible || generating} onClick={() => chooseStep(number)} aria-current={step === number ? "step" : undefined}>
+              <span className="workflow-step-number">{done && step !== number ? <Check size={14} /> : number}</span><span className="workflow-step-copy"><strong>{item.title}</strong><small>{item.caption}</small></span>
+            </button>;
+          })}
+        </nav>}
 
-          <section className="main-panel">
-            {!recentTemplatePage && <>
-              <div className="progress-head"><span>STEP 0{step} <span style={{ color: "#b0b7b0" }}>/ 04</span> &nbsp;·&nbsp; {pageTitle}</span><span>{step === 4 && rows.length ? `${counts.valid} ready · ${counts.excluded} excluded` : "About 2 minutes to set up"}</span></div>
-              <div className="progress-track"><div className="progress-fill" style={{ width: `${step * 25}%` }} /></div>
-            </>}
+        <section className="main-panel">
+          {error && <div className="notice error" role="alert"><CircleAlert size={15} /><span>{error}</span><button className="button ghost small" aria-label="Dismiss" onClick={() => setError("")}><X size={14} /></button></div>}
 
-            {error && <div className="notice error" role="alert"><CircleAlert size={15} /><span>{error}</span><button className="button ghost small" aria-label="Dismiss" onClick={() => setError("")}><X size={14} /></button></div>}
-
-            {recentTemplatePage ? <section className="card">
-              <div className="card-head"><div><div className="step-kicker">Kept on this device</div><h2>Your template library</h2><p>Reuse a document template with another spreadsheet whenever you need it.</p></div><button className="button secondary small" onClick={() => setRecentTemplatePage(false)}><ArrowLeft size={14} /> Back to batch</button></div>
+          {recentTemplatePage ? <section className="card">
+            <div className="card-head"><div><div className="step-kicker">SAVED ON THIS DEVICE</div><h2>Your template library</h2><p>Reuse a document template with another spreadsheet whenever you need it.</p></div><button className="button secondary small" onClick={() => setRecentTemplatePage(false)}><ArrowLeft size={14} /> Back to batch</button></div>
+            <div className="card-body">
+              {templates.length ? <div className="template-grid">{templates.map((template) => <button key={template.id} className="template-tile" onClick={() => void selectTemplate(template)}>
+                <span className="file-icon"><FileText size={20} /></span><span className="template-tile-name">{template.name}</span><span className="template-tile-meta">{template.fields?.length ?? 0} placed fields · updated {new Date(template.updatedAt).toLocaleDateString()}</span>
+              </button>)}</div> : <div className="empty-state"><FolderOpen size={28} /><div>No templates saved yet.</div><p>Upload an image, PDF, or Word document to save a reusable layout.</p><button className="button small" onClick={() => { setRecentTemplatePage(false); setStep(1); }}>Choose a template</button></div>}
+              <div className="step-footer"><span className="subtle">Templates and batches stay in this browser for up to seven days.</span><button className="button danger small" onClick={() => void deleteAllData()}><Trash2 size={13} /> Delete all local data</button></div>
+            </div>
+          </section> : <>
+            {step === 1 && <section className="card">
+              <div className="card-head"><div><div className="step-kicker">STEP 01 · TEMPLATE</div><h2>Choose your document</h2><p>Upload a page to personalize. Word files are converted to PDF before placement.</p></div><span className="format-badge"><FileText size={13} /> PNG · JPG · PDF · WORD</span></div>
               <div className="card-body">
-                {templates.length ? <div className="template-grid">{templates.map((template) => <button key={template.id} className="template-tile" onClick={() => void selectTemplate(template)}>
-                  <span className="file-icon"><FileText size={20} /></span><span className="template-tile-name">{template.name}</span><span className="template-tile-meta">{template.fields?.length ?? 0} placed fields · updated {new Date(template.updatedAt).toLocaleDateString()}</span>
-                </button>)}</div> : <div className="empty-state"><FolderOpen size={28} /><div>No templates saved yet.</div><p>Upload an image, PDF, or Word document to design reusable field positions.</p><button className="button small" onClick={() => { setRecentTemplatePage(false); setStep(1); }}>Choose a template</button></div>}
-                <div className="step-footer"><span className="subtle">Clearing all local data removes every saved template and batch.</span><button className="button danger small" onClick={() => void deleteAllData()}><Trash2 size={13} /> Delete all local data</button></div>
+                {templateBlob ? <div className="file-card"><span className="file-icon"><FileCheck2 size={20} /></span><span className="file-meta"><span className="file-name">{templateName}</span><span className="file-sub">{fileSize(templateBlob.size)} · {batch.fields.length} placed fields</span></span><span className="file-actions"><button className="button secondary small" onClick={() => templateInput.current?.click()} disabled={busy}><RotateCcw size={13} /><span>Replace</span></button><button className="button ghost small" onClick={() => setRecentTemplatePage(true)}>Library</button></span></div> : <div className={`dropzone ${draggingTemplate ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDraggingTemplate(true); }} onDragLeave={() => setDraggingTemplate(false)} onDrop={(event) => dropFile(event, "template")}>
+                  <div className="drop-icon"><Upload size={21} /></div><div className="drop-title">Drop a document here to begin</div><div className="drop-help">PNG, JPG, PDF, DOC, DOCX · up to 25 MB · kept on this device</div><button className="button" onClick={() => templateInput.current?.click()} disabled={busy}>{busy ? <LoaderCircle size={14} className="spin" /> : <FolderOpen size={14} />} Choose a template</button><a className="small-link sample-link" href="/sample-attendance-warning.docx" download>Download sample template</a>
+                </div>}
+                <input ref={templateInput} type="file" accept=".doc,.docx,.pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" hidden onChange={handleTemplateInput} />
+                {templateBlob && batch.fields.length > 0 && <><div className="section-label">Saved fields</div><div className="placeholder-chips">{batch.fields.map((field) => <span className="mapping-tag" key={field.id}>{field.column}</span>)}</div></>}
+                <div className="notice info" style={{ marginTop: 20 }}><LockKeyhole size={14} /><span>Your template is stored in this browser. Word conversion can affect pagination, so review the page before placing fields.</span></div>
+                <div className="step-footer"><span className="subtle">Your original file is not sent to a document conversion service.</span><button className="button" disabled={!hasTemplate || busy} onClick={continueTo}>Continue to data <ArrowRight size={14} /></button></div>
               </div>
-            </section> : <>
-              {step === 1 && <section className="card">
-                <div className="card-head"><div><div className="step-kicker">01 — Start with a document</div><h2>Choose your template</h2><p>Upload an image, PDF, or Word document. EasyDocs turns each into a printable background for field placement.</p></div><span className="format-badge"><FileText size={13} /> Image · PDF · Word</span></div>
-                <div className="card-body">
-                  {templateBlob ? <div className="file-card"><span className="file-icon"><FileCheck2 size={20} /></span><span className="file-meta"><span className="file-name">{templateName}</span><span className="file-sub">{fileSize(templateBlob.size)} · {batch.fields.length} placed fields</span></span><span className="file-actions"><button className="button secondary small" onClick={() => templateInput.current?.click()} disabled={busy}><RotateCcw size={13} /><span>Replace</span></button><button className="button ghost small" onClick={() => setRecentTemplatePage(true)}>Library</button></span></div> : <div className={`dropzone ${draggingTemplate ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDraggingTemplate(true); }} onDragLeave={() => setDraggingTemplate(false)} onDrop={(event) => dropFile(event, "template")}>
-                    <div className="drop-icon"><Upload size={21} /></div><div className="drop-title">Drop an image, PDF, or Word document here</div><div className="drop-help">PNG, JPG, PDF, DOC, DOCX · up to 25 MB · stays on device</div><button className="button" onClick={() => templateInput.current?.click()} disabled={busy}>{busy ? <LoaderCircle size={14} className="spin" /> : <FolderOpen size={14} />} Browse files</button><a className="small-link sample-link" href="/sample-attendance-warning.docx" download>Download a sample letter</a>
-                  </div>}
-                  <input ref={templateInput} type="file" accept=".doc,.docx,.pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" hidden onChange={handleTemplateInput} />
-                  {templateBlob && batch.fields.length > 0 && <>
-                    <div className="section-label">Fields placed on this page</div>
-                    <div className="placeholder-chips">{batch.fields.map((field) => <span className="mapping-tag" key={field.id}>{field.column}</span>)}</div>
-                  </>}
-                  <div className="notice info" style={{ marginTop: 20 }}><LockKeyhole size={14} /><span>Your template is saved in this browser for 7 days. Files stay on this device and are not uploaded.</span></div>
-                  <div className="step-footer"><span className="subtle">Fields are placed on top of your page background, then exported as printable PDFs.</span><button className="button" disabled={!hasTemplate || busy} onClick={continueTo}>Continue <ArrowRight size={14} /></button></div>
-                </div>
-              </section>}
+            </section>}
 
-              {step === 2 && <section className="card">
-                <div className="card-head"><div><div className="step-kicker">02 — Bring your list</div><h2>Import your spreadsheet</h2><p>Use a header row to label the columns you want to fill into the document.</p></div><span className="format-badge"><FileSpreadsheet size={13} /> CSV · XLS · XLSX</span></div>
-                <div className="card-body">
-                  {rows.length ? <div className="file-card"><span className="file-icon"><FileSpreadsheet size={20} /></span><span className="file-meta"><span className="file-name">{batch.datasetName}</span><span className="file-sub">{rows.length} rows · {batch.headers.length} columns{batch.sheetName ? ` · ${batch.sheetName}` : ""}</span></span><span className="file-actions"><button className="button secondary small" onClick={() => dataInput.current?.click()} disabled={busy}><RotateCcw size={13} /><span>Replace</span></button></span></div> : <div className={`dropzone ${draggingData ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDraggingData(true); }} onDragLeave={() => setDraggingData(false)} onDrop={(event) => dropFile(event, "data")}>
-                    <div className="drop-icon"><FileSpreadsheet size={21} /></div><div className="drop-title">Drop a CSV or Excel file here</div><div className="drop-help">CSV, XLS, XLSX · up to {MAX_BATCH_ROWS} rows · values stay on your device</div><button className="button" onClick={() => dataInput.current?.click()} disabled={busy}>{busy ? <LoaderCircle size={14} className="spin" /> : <FolderOpen size={14} />} Choose spreadsheet</button><a className="small-link sample-link" href="/sample-students.csv" download>Download sample data</a>
-                  </div>}
-                  <input ref={dataInput} type="file" accept=".csv,.xlsx,.xlsm,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={handleDataInput} />
-                  {rows.length > 0 && sheetNames.length > 1 && datasetFile && <div className="sheet-select"><label htmlFor="sheet-select">Worksheet</label><select id="sheet-select" className="select" value={selectedSheet} onChange={(event) => { setSelectedSheet(event.target.value); void handleDataFile(datasetFile, event.target.value); }}>{sheetNames.map((name) => <option key={name}>{name}</option>)}</select></div>}
-                  {batch.datasetWarnings.map((warning) => <div className="notice warn" key={warning} style={{ marginTop: 10 }}><CircleAlert size={14} /><span>{warning}</span></div>)}
-                  {rows.length > 0 && <><div className="section-label">A quick look at your data</div><DatasetTable headers={batch.headers} rows={rows.slice(0, 4)} /></>}
-                  <div className="notice info" style={{ marginTop: 20 }}><ShieldCheck size={14} /><span>Leading zeroes are kept when values are stored as text. Check Excel formatting for IDs stored as numbers.</span></div>
-                  <div className="step-footer"><button className="button secondary" onClick={() => setStep(1)}><ArrowLeft size={14} /> Back</button><button className="button" disabled={!rows.length || busy} onClick={continueTo}>Continue to field mapping <ArrowRight size={14} /></button></div>
-                </div>
-              </section>}
+            {step === 2 && <section className="card">
+              <div className="card-head"><div><div className="step-kicker">STEP 02 · DATA</div><h2>Import your spreadsheet</h2><p>Use one header row and one record per row. You can review the imported values before mapping.</p></div><span className="format-badge"><FileSpreadsheet size={13} /> CSV · XLS · XLSX · XLSM</span></div>
+              <div className="card-body">
+                {rows.length ? <div className="file-card"><span className="file-icon"><FileSpreadsheet size={20} /></span><span className="file-meta"><span className="file-name">{batch.datasetName}</span><span className="file-sub">{rows.length} records · {batch.headers.length} columns{batch.sheetName ? ` · ${batch.sheetName}` : ""}</span></span><span className="file-actions"><button className="button secondary small" onClick={() => dataInput.current?.click()} disabled={busy}><RotateCcw size={13} /> Replace data</button></span></div> : <div className={`dropzone ${draggingData ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDraggingData(true); }} onDragLeave={() => setDraggingData(false)} onDrop={(event) => dropFile(event, "data")}>
+                  <div className="drop-icon"><FileSpreadsheet size={21} /></div><div className="drop-title">Drop your CSV or Excel file here</div><div className="drop-help">CSV, XLS, XLSX, XLSM · up to {MAX_BATCH_ROWS} rows · processed in this browser</div><button className="button" onClick={() => dataInput.current?.click()} disabled={busy}>{busy ? <LoaderCircle size={14} className="spin" /> : <FolderOpen size={14} />} Choose spreadsheet</button><a className="small-link sample-link" href="/sample-students.csv" download>Download sample data</a>
+                </div>}
+                <input ref={dataInput} type="file" accept=".csv,.xlsx,.xlsm,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={handleDataInput} />
+                {rows.length > 0 && sheetNames.length > 1 && datasetFile && <div className="sheet-select"><label htmlFor="sheet-select">Worksheet</label><select id="sheet-select" className="select" value={selectedSheet} onChange={(event) => { setSelectedSheet(event.target.value); void handleDataFile(datasetFile, event.target.value); }}>{sheetNames.map((name) => <option key={name}>{name}</option>)}</select></div>}
+                {batch.datasetWarnings.map((warning) => <div className="notice warn" key={warning} style={{ marginTop: 10 }}><CircleAlert size={14} /><span>{warning}</span></div>)}
+                {rows.length > 0 && <><div className="dataset-summary"><div><strong>{rows.length}</strong><span>records found</span></div><div><strong>{batch.headers.length}</strong><span>columns found</span></div><div><strong>{invalidRowIds.size}</strong><span>rows needing attention</span></div></div><div className="section-label">Data preview · first 4 records</div><DatasetTable headers={batch.headers} rows={rows.slice(0, 4)} /></>}
+                <div className="notice info" style={{ marginTop: 20 }}><ShieldCheck size={14} /><span>Leading zeroes are preserved when spreadsheet values are stored as text. Check Excel formatting for IDs stored as numbers.</span></div>
+                <div className="step-footer"><button className="button secondary" onClick={() => setStep(1)}><ArrowLeft size={14} /> Back</button><button className="button" disabled={!rows.length || busy} onClick={continueTo}>{hasTemplate ? "Continue to field placement" : "Choose a template"} <ArrowRight size={14} /></button></div>
+              </div>
+            </section>}
 
-              {step === 3 && <section className="card">
-                <div className="card-head"><div><div className="step-kicker">03 — Design and map</div><h2>Place your data on the page</h2><p>Add a spreadsheet column, drag it onto the preview, and adjust its position, size, color, and alignment.</p></div><span className="format-badge"><Sparkles size={13} /> {batch.fields.length} placed</span></div>
-                <div className="card-body">
-                  {!hasTemplate && <div className="notice error"><CircleAlert size={15} /><span>Choose a supported document template before mapping spreadsheet fields.</span></div>}
-                  {templateBlob && (batch.templateFormat === "image" || batch.templateFormat === "pdf") && <TemplateDesigner template={templateBlob} format={batch.templateFormat} headers={batch.headers} fields={batch.fields} sample={Object.fromEntries(batch.fields.map((field) => [field.id, getRowValue((rows.find((row) => row.included) ?? rows[0])?.values ?? {}, batch.mapping[field.id])]))} onAdd={addPositionedField} onUpdate={updatePositionedField} onRemove={removePositionedField} onDuplicate={duplicatePositionedField} />}
-                  {batch.datasetWarnings.map((warning) => <div className="notice warn" key={warning} style={{ marginTop: 10 }}><CircleAlert size={14} /><span>{warning}</span></div>)}
-                  <div className="validation-summary"><Stat label="Records" value={counts.total} /><Stat label="Ready to generate" value={counts.valid} /><Stat label="Need attention" value={invalidRowIds.size} color={invalidRowIds.size ? "#a25243" : undefined} /><Stat label="Excluded" value={counts.excluded} /></div>
-                  {hasUnexcludedInvalid && !mappedMissing.length && <div className="notice warn"><CircleAlert size={14} /><span>{invalidRowIds.size} included row{invalidRowIds.size === 1 ? "" : "s"} are missing required values. Exclude them below or correct the spreadsheet and re-import.</span></div>}
-                  {batch.fields.length === 0 && <div className="notice warn"><CircleAlert size={14} /><span>Add at least one data field and position it on the document preview before continuing.</span></div>}
-                  <div className="section-label">Record review <span className="subtle">· incomplete rows cannot be generated</span></div>
-                  <div className="table-scroll"><table className="data-table"><thead><tr><th>Include</th><th>Row</th>{batch.headers.slice(0, 5).map((header, index) => <th key={`${header}-${index}`}>{header}</th>)}<th>Validation</th></tr></thead><tbody>
-                      {(showAllRows ? rows : rows.slice(0, 10)).map((row) => {
-                      const missing = missingForRow(row);
-                        const columns = [...new Set([...batch.headers.slice(0, 4), ...batch.placeholders.map((field) => batch.mapping[field]).filter((value): value is string => Boolean(value))])];
-                        return <tr key={row.id} className={!row.included ? "row-exclude" : ""}><td><input aria-label={`Include row ${row.id}`} className="checkbox" type="checkbox" checked={row.included} onChange={() => void toggleRow(row.id)} disabled={generating} /></td><td>{row.id}</td>{columns.map((header, index) => {
-                          const needsValue = missing.some((field) => batch.mapping[field] === header);
-                          return <td key={`${header}-${index}`} title={row.values[header]}>{needsValue && row.included ? <input className="text-input cell-input" aria-label={`Correct ${header} for row ${row.id}`} placeholder="Enter value" value={row.values[header] ?? ""} onChange={(event) => updateRowValue(row.id, header, event.target.value)} disabled={generating} /> : row.values[header] || "—"}</td>;
-                        })}<td>{!row.included ? "Excluded" : missing.length ? `Missing: ${missing.map((id) => batch.mapping[id] ?? id).join(", ")}` : "Ready"}</td></tr>;
-                    })}
-                  </tbody></table></div>
-                  {rows.length > 10 && <button className="small-link" style={{ marginTop: 10 }} onClick={() => setShowAllRows((value) => !value)}>{showAllRows ? "Show fewer rows" : `Show all ${rows.length} rows`}</button>}
-                  <div className="step-footer"><button className="button secondary" onClick={() => setStep(2)}><ArrowLeft size={14} /> Back</button><button className="button" disabled={!canMap || hasUnexcludedInvalid} onClick={() => { setStep(4); setPreviewRowId(validRows[0]?.id ?? null); }}>Review documents <ArrowRight size={14} /></button></div>
-                </div>
-              </section>}
+            {step === 3 && <section className="card placement-card">
+              <div className="card-head"><div><div className="step-kicker">STEP 03 · PLACE FIELDS</div><h2>Put each value where it belongs</h2><p>Add a spreadsheet column, then position and style it on the document preview.</p></div><span className="format-badge"><Sparkles size={13} /> {batch.fields.length} fields</span></div>
+              <div className="card-body">
+                {!hasTemplate && <div className="notice error"><CircleAlert size={15} /><span>Choose a document template before placing spreadsheet fields.</span></div>}
+                {templateBlob && (batch.templateFormat === "image" || batch.templateFormat === "pdf") && <TemplateDesigner template={templateBlob} format={batch.templateFormat} headers={batch.headers} fields={batch.fields} sample={Object.fromEntries(batch.fields.map((field) => [field.id, getRowValue((rows.find((row) => row.included) ?? rows[0])?.values ?? {}, batch.mapping[field.id])]))} onAdd={addPositionedField} onUpdate={updatePositionedField} onRemove={removePositionedField} onDuplicate={duplicatePositionedField} onUndo={undoDesign} onRedo={redoDesign} canUndo={designCanUndo} canRedo={designCanRedo} onContinue={continueTo} onBack={() => setStep(2)} canContinue={canMap} />}
+                {batch.datasetWarnings.map((warning) => <div className="notice warn" key={warning} style={{ marginTop: 10 }}><CircleAlert size={14} /><span>{warning}</span></div>)}
+                {!batch.fields.length && <div className="notice info" style={{ marginTop: 14 }}><CircleAlert size={14} /><span>Add a field from the left panel. You can edit its position, font, size, and color.</span></div>}
+                <div className="step-footer"><button className="button secondary" onClick={() => setStep(2)}><ArrowLeft size={14} /> Back to data</button><button className="button" disabled={!canMap} onClick={continueTo}>Review records <ArrowRight size={14} /></button></div>
+              </div>
+            </section>}
 
-              {step === 4 && <section className="card">
-                <div className="card-head"><div><div className="step-kicker">04 — Check then create</div><h2>Preview and generate</h2><p>Review a real record, then generate one printable PDF for each valid spreadsheet row.</p></div><span className="format-badge"><FileCheck2 size={13} /> {counts.valid} ready</span></div>
-                <div className="card-body">
-                  {counts.valid === 0 && <div className="notice warn"><CircleAlert size={14} /><span>No eligible records are ready. Go back to mapping and review missing values.</span></div>}
-                  <div className="review-layout">
-                    <div>
-                      <div className="data-toolbar"><span className="step-kicker">Document preview</span><div className="record-selector"><select aria-label="Select preview record" className="select" value={previewRowId ?? ""} onChange={(event) => { setPreviewRowId(Number(event.target.value)); setPreviewUrl(""); setPreviewError(""); }}><option value="">Choose a record</option>{validRows.slice(0, 1000).map((row) => <option key={row.id} value={row.id}>Row {row.id} — {artifactBase(row, batch).split("_")[0]}</option>)}</select></div></div>
-                      <div className="preview-frame">
-                        {previewUrl ? <iframe title="Generated personalized document preview" src={previewUrl} /> : <div className="preview-placeholder"><FileText size={30} /><div>{previewError || (previewLoading ? `${engineMessage || "Preparing preview"}${engineProgress ? ` · ${engineProgress}%` : ""}` : "Choose a valid record and build its preview. This uses the same local renderer as the final PDF." )}</div>{previewError && <button className="button secondary small" style={{ marginTop: 13 }} onClick={() => void showPreview()}><RefreshCw size={13} /> Try again</button>}</div>}
-                      </div>
-                      <div className="button-row" style={{ marginTop: 11 }}><button className="button secondary small" disabled={!previewRowId || previewLoading} onClick={() => void showPreview()}>{previewLoading ? <LoaderCircle size={13} className="spin" /> : <Sparkles size={13} />}{previewLoading ? "Preparing preview" : previewUrl ? "Refresh preview" : "Build preview PDF"}</button><span className="subtle">First PDF can take a minute while the renderer loads.</span></div>
-                    </div>
-                    <div className="review-side">
-                  <div className="review-box"><h3>This batch</h3><div className="review-row"><span>Template</span><strong title={templateName}>{templateName || "Not selected"}</strong></div><div className="review-row"><span>Spreadsheet</span><strong>{batch.datasetName || "Not selected"}</strong></div><div className="review-row"><span>Rows in file</span><strong>{counts.total}</strong></div><div className="review-row"><span>Ready</span><strong>{counts.valid}</strong></div><div className="review-row"><span>Excluded</span><strong>{counts.excluded}</strong></div><div className="review-row"><span>Placed fields</span><strong>{batch.fields.length}</strong></div></div>
-                      <div className="generate-banner"><CloudOff size={17} /><div><strong>Private processing</strong><br />Your template and records stay on this device. The local PDF renderer is served by this app and never receives your documents.</div></div>
-                      {!allDone && <button className="button" disabled={!canGenerate || busy} onClick={() => void generateBatch(false)}>{generating ? <><LoaderCircle size={14} className="spin" /> Generating {counts.completed}/{counts.valid}</> : <><Sparkles size={14} /> Generate {counts.valid} document{counts.valid === 1 ? "" : "s"}</>}</button>}
-                      {generating && <><div className="progress-track"><div className="progress-fill" style={{ width: `${engineProgress}%` }} /></div><div className="subtle">{engineMessage || "Generating one record at a time"} · {engineProgress}%</div><button className="button secondary small" disabled={cancelRequested} onClick={requestCancel}><X size={13} /> {cancelRequested ? "Pausing after current record…" : "Pause batch"}</button></>}
-                    </div>
+            {step === 4 && <section className="card">
+              <div className="card-head"><div><div className="step-kicker">STEP 04 · REVIEW</div><h2>Check the document and records</h2><p>Preview a real record, then correct or exclude rows with missing required information.</p></div><span className="format-badge"><FileCheck2 size={13} /> {validRows.length} ready</span></div>
+              <div className="card-body">
+                <div className="validation-summary"><Stat label="Records" value={counts.total} /><Stat label="Ready" value={counts.valid} color="#287d48" /><Stat label="Need attention" value={invalidRowIds.size} color={invalidRowIds.size ? "#a25243" : undefined} /><Stat label="Excluded" value={counts.excluded} /></div>
+                {hasUnexcludedInvalid && <div className="notice warn"><CircleAlert size={14} /><span>{invalidRowIds.size} included record{invalidRowIds.size === 1 ? " is" : "s are"} missing required values. Correct the cells or exclude those rows to continue.</span></div>}
+                {validRows.length > 0 && <div className="review-layout">
+                  <div>
+                    <div className="data-toolbar"><span className="step-kicker">PRINT PREVIEW</span><div className="record-selector"><select aria-label="Select preview record" className="select" value={previewRowId ?? ""} onChange={(event) => { setPreviewRowId(Number(event.target.value)); setPreviewUrl(""); setPreviewError(""); }}><option value="">Choose a record</option>{validRows.slice(0, 1000).map((row) => <option key={row.id} value={row.id}>Row {row.id} — {artifactBase(row, batch).split("_")[0]}</option>)}</select></div></div>
+                    <div className="preview-frame">{previewUrl ? <iframe title="Generated personalized document preview" src={previewUrl} /> : <div className="preview-placeholder"><FileText size={30} /><div>{previewError || (previewLoading ? `${engineMessage || "Preparing preview"}${engineProgress ? ` · ${engineProgress}%` : ""}` : "Choose a record and create a preview using the final PDF renderer.")}</div>{previewError && <button className="button secondary small" style={{ marginTop: 13 }} onClick={() => void showPreview()}><RefreshCw size={13} /> Try again</button>}</div>}</div>
+                    <div className="button-row" style={{ marginTop: 11 }}><button className="button secondary small" disabled={!previewRowId || previewLoading} onClick={() => void showPreview()}>{previewLoading ? <LoaderCircle size={13} className="spin" /> : <Sparkles size={13} />}{previewLoading ? "Preparing preview" : previewUrl ? "Refresh preview" : "Build preview PDF"}</button><span className="subtle">This uses the same renderer as your batch output.</span></div>
                   </div>
+                  <aside className="review-side"><div className="review-box"><h3>Ready to create</h3><div className="review-row"><span>Template</span><strong title={templateName}>{templateName}</strong></div><div className="review-row"><span>Spreadsheet</span><strong>{batch.datasetName}</strong></div><div className="review-row"><span>Printable PDFs</span><strong>{validRows.length}</strong></div><div className="review-row"><span>Placed fields</span><strong>{batch.fields.length}</strong></div><div className="review-row"><span>Output</span><strong>PDF</strong></div></div><div className="notice info"><ShieldCheck size={14} /><span>Review the sample PDF and correct any missing values below before creating the batch.</span></div></aside>
+                </div>}
+                {rows.length > 0 && <><div className="section-label">Record checks <span className="subtle">· correct a value or exclude that record</span></div><div className="table-scroll"><table className="data-table"><thead><tr><th>Include</th><th>Record</th>{reviewColumns.map((header, index) => <th key={`${header}-${index}`}>{header}</th>)}<th>Status</th></tr></thead><tbody>
+                  {(showAllRows ? rows : rows.slice(0, 10)).map((row) => {
+                    const missing = missingForRow(row);
+                    return <tr key={row.id} className={!row.included ? "row-exclude" : ""}><td><input aria-label={`Include row ${row.id}`} className="checkbox" type="checkbox" checked={row.included} onChange={() => void toggleRow(row.id)} disabled={generating} /></td><td>{row.id}</td>{reviewColumns.map((header, index) => { const needsValue = missing.some((field) => batch.mapping[field] === header); return <td key={`${header}-${index}`} title={row.values[header]}>{needsValue && row.included ? <input className="text-input cell-input" aria-label={`Correct ${header} for row ${row.id}`} placeholder="Enter value" value={row.values[header] ?? ""} onChange={(event) => updateRowValue(row.id, header, event.target.value)} disabled={generating} /> : row.values[header] || "—"}</td>; })}<td>{!row.included ? "Excluded" : missing.length ? <span className="validation-error">Missing: {missing.map((id) => batch.mapping[id] ?? id).join(", ")}</span> : <span className="validation-ok">Ready</span>}</td></tr>;
+                  })}
+                </tbody></table></div>{rows.length > 10 && <button className="small-link" style={{ marginTop: 10 }} onClick={() => setShowAllRows((value) => !value)}>{showAllRows ? "Show fewer records" : `Show all ${rows.length} records`}</button>}</>}
+                <div className="step-footer"><button className="button secondary" onClick={() => setStep(3)}><ArrowLeft size={14} /> Back to field placement</button><button className="button" disabled={!canMap || hasUnexcludedInvalid || validRows.length === 0} onClick={() => setStep(5)}>Continue to generation <ArrowRight size={14} /></button></div>
+              </div>
+            </section>}
 
-                  {(counts.completed > 0 || counts.failed > 0 || allDone) && <div className="results-section">
-                    <div className="section-label">Batch results</div>
-                    <div className="validation-summary"><Stat label="Completed" value={counts.completed} color="#39704c" /><Stat label="Failed" value={counts.failed} color={counts.failed ? "#a25243" : undefined} /><Stat label="Excluded" value={counts.excluded} /><Stat label="Remaining" value={rows.filter((row) => row.included && (row.status === "pending" || row.status === "processing")).length} /></div>
-                    {counts.failed > 0 && <div className="notice error"><CircleAlert size={14} /><div><strong>Some records need another try.</strong><ul className="error-list">{rows.filter((row) => row.status === "failed").slice(0, 6).map((row) => <li key={row.id}>Row {row.id}: {row.error}</li>)}</ul></div></div>}
-                    <div className="result-actions" style={{ margin: "13px 0" }}>
-                      <button className="button small" disabled={!counts.completed || busy || generating} onClick={() => void downloadZip()}><FileArchive size={14} /> Download ZIP{exportProgress !== null ? ` ${exportProgress}%` : ""}</button>
-                      <button className="button secondary small" disabled={!counts.completed || busy || generating} onClick={() => void downloadCombinedPdf()}><FileText size={14} /> Combined print PDF{exportProgress !== null && busy ? ` ${exportProgress}%` : ""}</button>
-                      {counts.failed > 0 && <button className="button secondary small" disabled={busy || generating} onClick={() => void generateBatch(true)}><RefreshCw size={13} /> Retry failed rows</button>}
-                      {(counts.completed > 0 || counts.failed > 0) && <button className="button ghost small" disabled={generating} onClick={() => void generateBatch(false)}><RotateCcw size={13} /> Resume pending</button>}
-                    </div>
-                    <div className="table-scroll"><table className="batch-table"><thead><tr><th>Row</th><th>Recipient / filename</th><th>Status</th><th>Files</th></tr></thead><tbody>{rows.filter((row) => row.included || row.status === "excluded").slice(0, 40).map((row) => <tr key={row.id}><td>{row.id}</td><td>{artifactBase(row, batch)}</td><td><StatusPill status={row.included ? row.status : "excluded"} /></td><td>{row.status === "completed" ? <span className="button-row">{row.docx && <button className="small-link" onClick={() => downloadSingle(row, "docx")}>Word</button>}<button className="small-link" onClick={() => downloadSingle(row, "pdf")}>PDF</button></span> : row.error ? <span title={row.error} style={{ color: "#a25243" }}>View error</span> : "—"}</td></tr>)}</tbody></table></div>
-                    {rows.filter((row) => row.included || row.status === "excluded").length > 40 && <div className="subtle" style={{ marginTop: 8 }}>Showing the first 40 rows. Every completed file is included in your exports.</div>}
-                  </div>}
-
-                  <div className="step-footer"><button className="button secondary" disabled={generating} onClick={() => setStep(3)}><ArrowLeft size={14} /> Back to mapping</button><div className="button-row"><button className="button ghost small" disabled={generating} onClick={() => void startOver()}><Trash2 size={13} /> Clear this batch</button></div></div>
-                </div>
-              </section>}
-            </>}
-          </section>
-        </div>
-        <div className="footer-note"><span>EasyDocs works in this browser. Local batches are removed after 7 days. &nbsp;·&nbsp; </span><button className="small-link" onClick={() => void deleteAllData()}>Delete all local data</button></div>
+            {step === 5 && <section className="card">
+              <div className="card-head"><div><div className="step-kicker">STEP 05 · GENERATE</div><h2>{allDone ? "Your batch is ready" : generating ? "Creating your documents" : "Generate personalized PDFs"}</h2><p>{allDone ? "Download individual files, a ZIP archive, or one combined print PDF." : "Your reviewed records will become individual PDFs, one document per record."}</p></div><span className="format-badge"><FileCheck2 size={13} /> {counts.valid} eligible</span></div>
+              <div className="card-body">
+                {!allDone && <div className="generation-summary"><div><span>Template</span><strong title={templateName}>{templateName || "Not selected"}</strong></div><div><span>Spreadsheet</span><strong title={batch.datasetName ?? ""}>{batch.datasetName || "Not selected"}</strong></div><div><span>Records to generate</span><strong>{validRows.length}</strong></div><div><span>Output format</span><strong>Printable PDF</strong></div></div>}
+                {!allDone && !generating && <div className="notice info" style={{ marginTop: 15 }}><LockKeyhole size={14} /><span>Generation runs in this browser. Completed PDFs are saved with your batch and remain available if some records fail.</span></div>}
+                {counts.valid === 0 && <div className="notice warn"><CircleAlert size={14} /><span>No eligible records are ready. Return to review and resolve the row issues.</span></div>}
+                {!allDone && !generating && <button className="button button-large generate-action" disabled={!canGenerate || busy} onClick={() => void generateBatch(false)}><Sparkles size={15} />{counts.completed || counts.failed ? "Resume document generation" : `Generate ${validRows.length} PDF${validRows.length === 1 ? "" : "s"}`}</button>}
+                {generating && <div className="generation-progress" role="status" aria-live="polite"><div className="progress-copy"><div><strong>{engineMessage || "Creating documents"}</strong><span>{counts.completed} completed · {counts.failed} failed · {counts.pending} remaining</span></div><strong>{engineProgress}%</strong></div><div className="progress-track"><div className="progress-fill" style={{ width: `${engineProgress}%` }} /></div><button className="button secondary small" disabled={cancelRequested} onClick={requestCancel}><X size={13} /> {cancelRequested ? "Pausing after current document…" : "Pause batch"}</button></div>}
+                {(counts.completed > 0 || counts.failed > 0) && <div className="results-section">
+                  <div className="section-label">Batch results</div><div className="validation-summary"><Stat label="Completed" value={counts.completed} color="#287d48" /><Stat label="Failed" value={counts.failed} color={counts.failed ? "#a25243" : undefined} /><Stat label="Excluded" value={counts.excluded} /><Stat label="Remaining" value={rows.filter((row) => row.included && (row.status === "pending" || row.status === "processing")).length} /></div>
+                  {allDone && counts.failed > 0 && <div className="notice warn"><CircleAlert size={14} /><span>Some documents need another try. Successful PDFs are ready to download now.</span></div>}
+                  {counts.failed > 0 && <div className="notice error"><CircleAlert size={14} /><div><strong>Records that failed</strong><ul className="error-list">{rows.filter((row) => row.status === "failed").slice(0, 6).map((row) => <li key={row.id}>Record {row.id}: {row.error}</li>)}</ul></div></div>}
+                  <div className="result-actions" style={{ margin: "13px 0" }}>
+                    <button className="button small" disabled={!counts.completed || busy || generating} onClick={() => void downloadZip()}><FileArchive size={14} /> Download ZIP{exportProgress !== null ? ` ${exportProgress}%` : ""}</button>
+                    <button className="button secondary small" disabled={!counts.completed || busy || generating} onClick={() => void downloadCombinedPdf()}><FileText size={14} /> Combined print PDF{exportProgress !== null && busy ? ` ${exportProgress}%` : ""}</button>
+                    {counts.failed > 0 && <button className="button secondary small" disabled={busy || generating} onClick={() => void generateBatch(true)}><RefreshCw size={13} /> Retry failed</button>}
+                    {rows.some((row) => row.included && row.status === "pending") && (counts.completed > 0 || counts.failed > 0) && <button className="button ghost small" disabled={generating} onClick={() => void generateBatch(false)}><RotateCcw size={13} /> Resume remaining</button>}
+                  </div>
+                  <div className="table-scroll"><table className="batch-table"><thead><tr><th>Record</th><th>Document filename</th><th>Status</th><th>Download</th></tr></thead><tbody>{rows.filter((row) => row.included || row.status === "excluded").slice(0, 40).map((row) => <tr key={row.id}><td>{row.id}</td><td>{artifactBase(row, batch)}</td><td><StatusPill status={row.included ? row.status : "excluded"} /></td><td>{row.status === "completed" && row.pdf ? <button className="small-link" onClick={() => downloadSingle(row, "pdf")}>Download PDF</button> : row.error ? <span title={row.error} className="validation-error">See error above</span> : "—"}</td></tr>)}</tbody></table></div>
+                  {rows.filter((row) => row.included || row.status === "excluded").length > 40 && <div className="subtle" style={{ marginTop: 8 }}>Showing the first 40 records. All completed files are included in exports.</div>}
+                </div>}
+                <div className="step-footer"><button className="button secondary" disabled={generating} onClick={() => setStep(4)}><ArrowLeft size={14} /> Back to review</button><div className="button-row"><button className="button ghost small" disabled={generating} onClick={() => void newBatch()}><Plus size={13} /> New batch</button><button className="button danger small" disabled={generating} onClick={() => void startOver()}><Trash2 size={13} /> Clear this batch</button></div></div>
+              </div>
+            </section>}
+          </>}
+        </section>
+        <div className="app-footer"><span>Local batches expire after seven days. <Link href="/privacy">How local storage works</Link></span><button className="small-link" onClick={() => void deleteAllData()}>Delete all local data</button></div>
       </div>
       {toast && <div className="toast" role="status"><CheckCircle2 size={15} />{toast}</div>}
     </main>
