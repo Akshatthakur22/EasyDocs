@@ -9,7 +9,6 @@ import {
   LockKeyhole,
   Mail,
   MousePointer2,
-  Rows3,
   ShieldCheck,
   Sparkles,
   Linkedin,
@@ -100,99 +99,10 @@ function PublicHeader() {
   );
 }
 
-function ChromaticHorizonWave() {
-  return (
-    <div className="chromatic-wave-wrap" aria-hidden="true">
-      <svg
-        viewBox="0 0 1440 180"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        preserveAspectRatio="none"
-        className="chromatic-wave-svg"
-      >
-        <defs>
-          <filter id="wave-blur-deep" x="-20%" y="-40%" width="140%" height="200%">
-            <feGaussianBlur stdDeviation="32" />
-          </filter>
-          <filter id="wave-blur-mid" x="-20%" y="-30%" width="140%" height="180%">
-            <feGaussianBlur stdDeviation="18" />
-          </filter>
-          <filter id="wave-blur-sharp" x="-10%" y="-20%" width="120%" height="160%">
-            <feGaussianBlur stdDeviation="7" />
-          </filter>
-          <linearGradient id="glow-violet" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="0%" stopColor="#1e112d" stopOpacity="0.3" />
-            <stop offset="22%" stopColor="#44174d" stopOpacity="0.85" />
-            <stop offset="50%" stopColor="#2c103e" stopOpacity="0.75" />
-            <stop offset="76%" stopColor="#4a1850" stopOpacity="0.88" />
-            <stop offset="100%" stopColor="#180e26" stopOpacity="0.3" />
-          </linearGradient>
-          <linearGradient id="glow-magenta" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="5%" stopColor="#5d1646" stopOpacity="0" />
-            <stop offset="22%" stopColor="#8d2358" stopOpacity="0.85" />
-            <stop offset="48%" stopColor="#b9345b" stopOpacity="0.95" />
-            <stop offset="78%" stopColor="#9a2858" stopOpacity="0.9" />
-            <stop offset="95%" stopColor="#5a1544" stopOpacity="0" />
-          </linearGradient>
-          <linearGradient id="glow-amber" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="8%" stopColor="#cf4338" stopOpacity="0" />
-            <stop offset="26%" stopColor="#e55e40" stopOpacity="0.95" />
-            <stop offset="50%" stopColor="#f48b53" stopOpacity="1" />
-            <stop offset="76%" stopColor="#ea6b44" stopOpacity="0.95" />
-            <stop offset="92%" stopColor="#c84136" stopOpacity="0" />
-          </linearGradient>
-          <linearGradient id="glow-peach" x1="0%" y1="0%" x2="100%" y2="0%">
-            <stop offset="16%" stopColor="#f6ba82" stopOpacity="0" />
-            <stop offset="34%" stopColor="#facda0" stopOpacity="0.92" />
-            <stop offset="52%" stopColor="#fae0be" stopOpacity="1" />
-            <stop offset="72%" stopColor="#f8c894" stopOpacity="0.92" />
-            <stop offset="86%" stopColor="#f5b376" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-
-        {/* Deep violet aurora haze */}
-        <path
-          d="M-40,105 Q300,28 700,76 T1480,68 L1480,185 L-40,185 Z"
-          fill="url(#glow-violet)"
-          filter="url(#wave-blur-deep)"
-        />
-
-        {/* Vibrant Magenta/Rose glow ribbon */}
-        <path
-          d="M-40,112 Q310,42 710,84 T1480,75 L1480,185 L-40,185 Z"
-          fill="url(#glow-magenta)"
-          filter="url(#wave-blur-mid)"
-        />
-
-        {/* Luminous Ember/Sunset amber ribbon */}
-        <path
-          d="M-40,120 Q325,58 718,92 T1480,84 L1480,185 L-40,185 Z"
-          fill="url(#glow-amber)"
-          filter="url(#wave-blur-sharp)"
-        />
-
-        {/* Peach golden rim */}
-        <path
-          d="M-40,124 Q335,66 724,96 T1480,90 L1480,185 L-40,185 Z"
-          fill="url(#glow-peach)"
-          filter="url(#wave-blur-sharp)"
-          opacity="0.95"
-        />
-
-        {/* Solid warm cream curve transitioning into footer */}
-        <path
-          d="M-20,130 Q340,74 728,102 T1460,96 L1460,185 L-20,185 Z"
-          fill="#f6f3ec"
-        />
-      </svg>
-    </div>
-  );
-}
-
 function PublicFooter() {
   return (
     <footer className="public-footer">
-      {/* 1. Dark Obsidian Pre-footer CTA Stage */}
+      {/* 1. Pre-footer Call to Action */}
       <section className="prefooter-stage" aria-label="Get Started with EasyDocs">
         <div className="prefooter-content">
           <span className="prefooter-eyebrow">
@@ -205,19 +115,16 @@ function PublicFooter() {
             Bring your template and spreadsheet. Place your fields once, preview any record instantly, and export print-ready PDFs in seconds.
           </p>
           <div className="prefooter-action">
-            <Link href="/app" className="prefooter-pill-btn">
-              Try EasyDocs <ArrowRight size={15} />
+            <Link href="/app" className="button button-apple-primary button-large">
+              Open Document Studio <ArrowRight size={15} />
             </Link>
-            <span className="prefooter-subtext">Runs 100% locally in your browser</span>
+            <span className="prefooter-subtext">Runs 100% locally in your browser &middot; Private and open source</span>
           </div>
         </div>
       </section>
 
-      {/* 2. Chromatic Sunset Aurora Horizon Wave */}
-      <ChromaticHorizonWave />
-
-      {/* 3. Warm Cream Editorial Directory & Bleed Typography */}
-      <div className="footer-cream-stage">
+      {/* 2. Directory Navigation */}
+      <div className="footer-directory-stage">
         <div className="footer-inner">
           <div className="footer-directory-grid">
             {/* Left Brand & Attribution Column */}
@@ -301,9 +208,24 @@ function PublicFooter() {
               </nav>
             </div>
           </div>
+
+          <div className="footer-bottom-bar">
+            <div className="footer-bottom-copy">
+              EasyDocs is built for administrators, educators, and teams who need secure bulk document generation.
+            </div>
+            <div className="footer-bottom-links">
+              <Link href="/privacy">Privacy</Link>
+              <span aria-hidden="true">&middot;</span>
+              <Link href="/about">Architecture</Link>
+              <span aria-hidden="true">&middot;</span>
+              <a href="https://github.com/Akshatthakur22/EasyDocs" target="_blank" rel="noreferrer">GitHub</a>
+              <span aria-hidden="true">&middot;</span>
+              <Link href="/contact">Contact</Link>
+            </div>
+          </div>
         </div>
 
-        {/* 4. Giant Cropped Wordmark Bleed at Bottom Edge */}
+        {/* Subtle architectural wordmark */}
         <div className="footer-bleed-wrap" aria-hidden="true">
           <span className="footer-bleed-text">EasyDocs</span>
         </div>
@@ -315,143 +237,209 @@ function PublicFooter() {
 export function LandingPage() {
   return (
     <PublicLayout>
-      {/* 1. HERO SECTION */}
-      <section className="marketing-hero">
-        <div className="hero-copy">
-          <span className="eyebrow">
-            <Sparkles size={13} /> 100% FREE &amp; LOCAL-FIRST BULK DOCUMENT GENERATOR
-          </span>
-          <h1>
-            Generate hundreds of personalized PDFs<br />
-            <span>from one template and a spreadsheet.</span>
+      {/* 1. EDITORIAL HERO SECTION (Apple Inspired) */}
+      <section className="marketing-hero apple-hero">
+        <div className="hero-squircle-ambient" aria-hidden="true">
+          <div className="squircle-card squircle-1">
+            <FileText size={28} strokeWidth={1.75} />
+          </div>
+          <div className="squircle-card squircle-2">
+            <ShieldCheck size={28} strokeWidth={1.75} />
+          </div>
+          <div className="squircle-card squircle-3">
+            <Layers size={28} strokeWidth={1.75} />
+          </div>
+          <div className="squircle-card squircle-4">
+            <Printer size={28} strokeWidth={1.75} />
+          </div>
+        </div>
+
+        <div className="hero-content">
+          <span className="hero-kicker">EASYDOCS STUDIO</span>
+          <h1 className="hero-headline">
+            Think less.<br />
+            <span>Generate more.</span>
           </h1>
-          <p>
-            Upload your existing PDF, Word, or image document. Connect your CSV or Excel sheet,
-            visually place text, signatures, and photos with live resizing, and export print-ready
-            PDFs in bulk — completely in your browser with zero cloud uploads.
+          <p className="hero-subhead">
+            Create hundreds of personalized certificates, letters, and forms in seconds.
+            Bring your existing PDF or Word file, map your spreadsheet columns, and export
+            print-ready batches — 100% locally in your browser.
           </p>
           <div className="hero-actions">
-            <Link href="/app" className="button button-large">
-              Start Generating Free <ArrowRight size={16} />
+            <Link href="/app" className="button button-apple-primary button-large">
+              Open Document Studio <ArrowRight size={15} />
             </Link>
-            <a href="#quickstart" className="button secondary button-large">
-              <Download size={15} /> Try Sample Files
+            <a href="#quickstart" className="button secondary button-apple-secondary button-large">
+              <Download size={15} /> Download Sample Files
             </a>
           </div>
-          <div className="hero-trust">
-            <span>
-              <Check size={14} /> 100% Free Core Tool
-            </span>
-            <span>
-              <LockKeyhole size={14} /> Local-first (Files never leave device)
-            </span>
-            <span>
-              <ShieldCheck size={14} /> No Account or Signup Needed
-            </span>
+          <div className="hero-trust-bar">
+            <span><ShieldCheck size={14} /> 100% In-Browser Engine</span>
+            <span className="hero-trust-sep" aria-hidden="true">&middot;</span>
+            <span><LockKeyhole size={14} /> Files Never Leave Device</span>
+            <span className="hero-trust-sep" aria-hidden="true">&middot;</span>
+            <span><Check size={14} /> Free &amp; Open Source</span>
           </div>
         </div>
+      </section>
 
-        {/* Dynamic Workflow Mockup */}
-        <div className="hero-demo" aria-label="Visual demonstration of placing spreadsheet data and dynamic signatures onto a document">
-          <div className="demo-window-bar">
-            <div className="demo-window-dots">
-              <i />
-              <i />
-              <i />
+      {/* 2. THREE-PILLAR HARDWARE-GRADE SPEC STRIP */}
+      <section className="apple-spec-strip" aria-label="Key capabilities at a glance">
+        <div className="spec-strip-inner">
+          <div className="spec-strip-item">
+            <div className="spec-strip-icon">
+              <Cpu size={20} strokeWidth={2} />
             </div>
-            <span>EasyDocs Live Studio · Client-Side Canvas</span>
-            <span className="demo-live">
-              <span /> 100% Local Processing
-            </span>
+            <h3>100% In-Browser Engine</h3>
+            <p>Documents synthesize directly on your CPU via client-side libraries. Zero server uploads, zero external API latency.</p>
           </div>
-          <div className="demo-workspace">
-            <div className="demo-sheet">
-              <div className="demo-panel-title">
-                <FileSpreadsheet size={14} /> Recipients.csv
-              </div>
-              <div className="demo-table-head">
-                <span>Name</span>
-                <span>Role / ID</span>
-              </div>
-              <div className="demo-table-row">
-                <span>Dr. Avery Chen</span>
-                <span>Dean · ID-401</span>
-              </div>
-              <div className="demo-table-row">
-                <span>Jordan Lee</span>
-                <span>Lead · ID-402</span>
-              </div>
-              <div className="demo-table-row">
-                <span>Sam Patel</span>
-                <span>Fellow · ID-403</span>
-              </div>
-              <span className="demo-more">150 records loaded</span>
+          <div className="spec-strip-item">
+            <div className="spec-strip-icon">
+              <MousePointer2 size={20} strokeWidth={2} />
             </div>
-
-            <div className="demo-connector">
-              <ArrowRight size={18} />
-              <span>Map &amp; Place</span>
-              <ArrowRight size={18} />
+            <h3>Precision Visual Overlays</h3>
+            <p>8-handle interactive resizing for text, transparent signatures, and photo stamps with live dimension badges.</p>
+          </div>
+          <div className="spec-strip-item">
+            <div className="spec-strip-icon">
+              <Printer size={20} strokeWidth={2} />
             </div>
+            <h3>Print-Ready Batch Outputs</h3>
+            <p>Single sequenced merged PDF ready for duplex office printing, plus structured ZIP archives and single files.</p>
+          </div>
+        </div>
+      </section>
 
-            <div className="demo-document">
-              <div className="demo-doc-kicker">CERTIFICATE OF ACHIEVEMENT</div>
-              <div className="demo-doc-title">Award of Recognition</div>
-              <div className="demo-doc-line">
-                Presented to: <strong>Dr. Avery Chen</strong>
-              </div>
-              <div className="demo-doc-line">
-                In recognition of outstanding dedication and leadership.
-              </div>
-              <div className="demo-doc-signature-box">
-                <span className="demo-sig-pill">Signature · 160 × 60 pt</span>
-                <div className="demo-sig-content">
-                  <em>Avery Chen</em>
+      {/* 3. AUTHENTIC STUDIO SHOWCASE */}
+      <section className="marketing-section showcase-section" id="how-it-works">
+        <div className="section-intro text-center">
+          <span className="eyebrow">A STUDIO DESIGNED FOR CLARITY</span>
+          <h2>Five deliberate steps. Zero repetitive editing.</h2>
+          <p>
+            Designed for administrators, teachers, and small teams who already have documents and
+            spreadsheets and want clean batch results without subscription bloat.
+          </p>
+        </div>
+
+        <div className="apple-studio-window" aria-label="Authentic representation of the EasyDocs 5-step studio interface">
+          <div className="studio-window-bar">
+            <div className="studio-window-dots">
+              <i />
+              <i />
+              <i />
+            </div>
+            <div className="studio-window-title">
+              EasyDocs Studio &mdash; Certificate_Template.docx &times; Recipients.csv
+            </div>
+            <div className="studio-window-badge">
+              <span className="live-pulse" /> Local Sandbox
+            </div>
+          </div>
+
+          <div className="studio-workflow-bar">
+            <div className="studio-step-chip done">
+              <Check size={12} /> 1. Template
+            </div>
+            <div className="studio-step-chip done">
+              <Check size={12} /> 2. Dataset
+            </div>
+            <div className="studio-step-chip active">
+              <span>3</span> Design Canvas
+            </div>
+            <div className="studio-step-chip">
+              <span>4</span> Review
+            </div>
+            <div className="studio-step-chip">
+              <span>5</span> Export
+            </div>
+          </div>
+
+          <div className="studio-canvas-stage">
+            <div className="studio-doc-canvas">
+              <div className="doc-canvas-paper">
+                <div className="doc-header-kicker">CERTIFICATE OF ACHIEVEMENT</div>
+                <h3 className="doc-title-line">Award of Recognition</h3>
+                <p className="doc-body-lead">This certificate is proudly presented to</p>
+
+                {/* Placed Dynamic Field: Name */}
+                <div className="canvas-field-box active-field">
+                  <span className="field-tag-badge">Text &middot; &#123;&#123;Full Name&#125;&#125;</span>
+                  <div className="field-sample-text">Dr. Avery Chen</div>
+                  <span className="field-handle handle-nw" />
+                  <span className="field-handle handle-ne" />
+                  <span className="field-handle handle-se" />
+                  <span className="field-handle handle-sw" />
+                </div>
+
+                <p className="doc-body-desc">
+                  In recognition of outstanding dedication, academic rigor, and leadership during the 2025–2026 academic term.
+                </p>
+
+                <div className="doc-footer-row">
+                  {/* Placed Dynamic Field: Date */}
+                  <div className="canvas-field-box static-field">
+                    <span className="field-tag-badge">Text &middot; &#123;&#123;Issue Date&#125;&#125;</span>
+                    <div className="field-sample-text-sub">October 24, 2026</div>
+                  </div>
+
+                  {/* Placed Dynamic Field: Signature */}
+                  <div className="canvas-field-box signature-field">
+                    <span className="field-tag-badge">Signature &middot; 160 &times; 60 pt</span>
+                    <div className="field-signature-preview">
+                      <em>Avery Chen</em>
+                    </div>
+                    <span className="field-handle handle-se" />
+                  </div>
                 </div>
               </div>
-              <div className="demo-doc-date">October 2026 · ID-401</div>
-              <span className="demo-field-dot" title="Drag & Resize Handle">
-                <MousePointer2 size={12} />
-              </span>
+            </div>
+
+            {/* Field Control Inspector */}
+            <div className="studio-inspector-panel">
+              <div className="inspector-head">
+                <span className="eyebrow">FIELD PROPERTIES</span>
+                <h4>&#123;&#123;Full Name&#125;&#125;</h4>
+              </div>
+
+              <div className="inspector-group">
+                <label>Field Type</label>
+                <div className="inspector-pill-toggle">
+                  <span className="active">Text</span>
+                  <span>Signature / Image</span>
+                </div>
+              </div>
+
+              <div className="inspector-group">
+                <label>Typography</label>
+                <div className="inspector-row">
+                  <span className="inspector-val">Helvetica &middot; 22 pt</span>
+                  <span className="inspector-badge">Bold</span>
+                </div>
+              </div>
+
+              <div className="inspector-group">
+                <label>Page Scope</label>
+                <div className="inspector-row">
+                  <span className="inspector-val">Repeat Across All Pages</span>
+                  <span className="inspector-badge-blue">Synced</span>
+                </div>
+              </div>
+
+              <div className="inspector-record-nav">
+                <span className="record-label">PREVIEW RECORD</span>
+                <div className="record-stepper">
+                  <span className="record-curr">1 of 150</span>
+                  <span className="record-name">Dr. Avery Chen</span>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="demo-caption">
-            <span>
-              <Rows3 size={13} /> Spreadsheets (CSV/Excel)
-            </span>
-            <span>
-              <MousePointer2 size={13} /> 8-Handle Resizing
-            </span>
-            <span>
-              <Printer size={13} /> Merged or Individual PDFs
-            </span>
-          </div>
         </div>
       </section>
 
-      {/* QUICK PROOF STRIP */}
-      <section className="proof-strip">
-        <div>
-          <strong>01</strong>
-          <span>Upload PDF, Word, or Scan</span>
-        </div>
-        <div>
-          <strong>02</strong>
-          <span>Import CSV or Excel</span>
-        </div>
-        <div>
-          <strong>03</strong>
-          <span>Place &amp; Resize Fields Visually</span>
-        </div>
-        <div>
-          <strong>04</strong>
-          <span>Export Bulk Personalized PDFs</span>
-        </div>
-      </section>
-
-      {/* 2. INSTANT QUICKSTART / SAMPLE PACK */}
+      {/* 4. INSTANT QUICKSTART / SAMPLE PACK */}
       <section className="marketing-section quickstart-section" id="quickstart">
-        <div className="section-intro">
+        <div className="section-intro text-center">
           <span className="eyebrow">TEST IN UNDER 30 SECONDS</span>
           <h2>Try EasyDocs immediately with sample data.</h2>
           <p>
@@ -504,85 +492,13 @@ export function LandingPage() {
             <div className="quickstart-card-body">
               <h3>Ready to Test?</h3>
               <p>Open the studio, drop both files in, and generate your first batch.</p>
-              <span className="quickstart-tag">No login · 100% Free</span>
+              <span className="quickstart-tag">No login &middot; 100% Free</span>
             </div>
-            <Link href="/app" className="button quickstart-action">
+            <Link href="/app" className="button button-apple-primary quickstart-action">
               Launch Studio <ArrowRight size={14} />
             </Link>
           </div>
         </div>
-      </section>
-
-      {/* 3. STEP-BY-STEP WORKFLOW */}
-      <section className="marketing-section how-section" id="how-it-works">
-        <div className="section-intro">
-          <span className="eyebrow">STREAMLINED WORKFLOW</span>
-          <h2>
-            Five deliberate steps.<br />
-            Zero repetitive editing.
-          </h2>
-          <p>
-            Designed for administrators, teachers, and small teams who already have documents and
-            spreadsheets and simply want bulk personalized output without subscription bloat.
-          </p>
-        </div>
-        <ol className="how-grid">
-          <li>
-            <span className="how-count">01 / TEMPLATE</span>
-            <span className="how-icon">
-              <FileText size={19} />
-            </span>
-            <h3>Bring Your Existing Template</h3>
-            <p>
-              Upload PDF, DOC, DOCX, PNG, or JPG. Scanned certificates, official letterheads, or Word
-              agreements become the high-fidelity background.
-            </p>
-          </li>
-          <li>
-            <span className="how-count">02 / DATA</span>
-            <span className="how-icon">
-              <FileSpreadsheet size={19} />
-            </span>
-            <h3>Connect Any Spreadsheet</h3>
-            <p>
-              Import CSV, Excel (.xlsx, .xls), or macro-enabled sheets (.xlsm). Every column
-              instantly becomes an available field.
-            </p>
-          </li>
-          <li>
-            <span className="how-count">03 / DESIGN &amp; RESIZE</span>
-            <span className="how-icon">
-              <MousePointer2 size={19} />
-            </span>
-            <h3>Place Text &amp; Dynamic Images</h3>
-            <p>
-              Position names, dates, roll numbers, signatures, and photos. Use our 8-handle canvas
-              resizer with live dimensions and presets (Signature, Stamp, Photo).
-            </p>
-          </li>
-          <li>
-            <span className="how-count">04 / PREVIEW &amp; SCOPE</span>
-            <span className="how-icon">
-              <Layers size={19} />
-            </span>
-            <h3>Review Real Recipient Records</h3>
-            <p>
-              Flip through actual recipient data before generating. Repeat headers across all pages
-              or lock specific items to single pages.
-            </p>
-          </li>
-          <li>
-            <span className="how-count">05 / BULK EXPORT</span>
-            <span className="how-icon">
-              <Printer size={19} />
-            </span>
-            <h3>Export Your Print-Ready Batch</h3>
-            <p>
-              Download individual personalized PDFs, a single clean ZIP archive, or a merged PDF
-              ready for office double-sided printing.
-            </p>
-          </li>
-        </ol>
       </section>
 
       {/* 4. CORE FEATURES & INNOVATIONS */}
