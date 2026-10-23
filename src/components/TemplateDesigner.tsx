@@ -46,8 +46,35 @@ const FONT_FAMILIES: Array<{ value: NonNullable<PositionedField["fontFamily"]>; 
   { value: "TimesRoman", label: "Times New Roman" },
   { value: "Courier", label: "Courier" },
 ];
-const inputStyle: React.CSSProperties = { display: "block", width: "100%", marginTop: 5, minHeight: 34, padding: "6px 8px", border: "1px solid #e5e5ea", borderRadius: 7, background: "#fff", color: "#1d1d1f", font: "inherit" };
-const toolButtonStyle: React.CSSProperties = { minHeight: 30, padding: "4px 8px", border: "1px solid #e5e5ea", borderRadius: 7, background: "#fff", cursor: "pointer", color: "#1d1d1f" };
+const inputStyle: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  marginTop: 5,
+  minHeight: 34,
+  padding: "6px 9px",
+  border: "1px solid #d2d2d7",
+  borderRadius: 7,
+  background: "#fff",
+  color: "#1d1d1f",
+  fontSize: 12,
+  fontFamily: "inherit",
+  outline: "none",
+};
+const toolButtonStyle: React.CSSProperties = {
+  minHeight: 30,
+  padding: "4px 9px",
+  border: "1px solid #d2d2d7",
+  borderRadius: 7,
+  background: "#fff",
+  cursor: "pointer",
+  color: "#1d1d1f",
+  fontSize: 12,
+  fontWeight: 500,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 4,
+};
 
 export default function TemplateDesigner({
   template,
@@ -454,49 +481,56 @@ export default function TemplateDesigner({
   }, [expanded, fitPage]);
 
   return (
-    <section className={`template-designer${expanded ? " template-designer-expanded" : ""}`} onKeyDown={handleKeys} style={{ position: expanded ? "fixed" : "relative", inset: expanded ? 12 : undefined, zIndex: expanded ? 1000 : undefined, display: "grid", gridTemplateColumns: "minmax(160px, 220px) minmax(0, 1fr) minmax(210px, 270px)", gridTemplateRows: expanded ? "minmax(0, 1fr) auto" : "minmax(0, 1fr)", minHeight: 0, height: expanded ? "calc(100dvh - 24px)" : "100%", border: "1px solid #e5e5ea", borderRadius: 16, overflow: "hidden", background: "#f5f5f7", boxShadow: expanded ? "0 20px 80px #1d1d1f40" : undefined }}>
-      <aside style={{ background: "#fff", borderRight: "1px solid #e5e5ea", padding: 14, overflowY: "auto" }}>
-        <strong style={{ fontSize: 13 }}>Place document fields</strong>
-        <p style={{ fontSize: 11, color: "#6e6e73", margin: "6px 0 12px" }}>Add text or image fields, then position them on the page.</p>
+    <section className={`template-designer${expanded ? " template-designer-expanded" : ""}`} onKeyDown={handleKeys} style={{ position: expanded ? "fixed" : "relative", inset: expanded ? 12 : undefined, zIndex: expanded ? 1000 : undefined, display: "grid", gridTemplateColumns: "minmax(180px, 230px) minmax(0, 1fr) minmax(230px, 280px)", gridTemplateRows: expanded ? "minmax(0, 1fr) auto" : "minmax(0, 1fr)", minHeight: 0, height: expanded ? "calc(100dvh - 24px)" : "100%", border: "1px solid #e5e5ea", borderRadius: 14, overflow: "hidden", background: "#f5f5f7", boxShadow: expanded ? "0 24px 64px rgba(0,0,0,0.2)" : undefined }}>
+      <aside style={{ background: "#fff", borderRight: "1px solid #e5e5ea", padding: "16px 14px", overflowY: "auto" }}>
+        <strong style={{ fontSize: 13, fontWeight: 650, color: "#1d1d1f" }}>Place document fields</strong>
+        <p style={{ fontSize: 12, color: "#6e6e73", margin: "4px 0 14px", lineHeight: 1.45 }}>Add text or image fields, then position them on the page.</p>
 
         <button
           type="button"
           onClick={() => setSelected(onAdd("Signature", page, "image"))}
-          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", margin: "8px 0 14px", padding: "9px 11px", borderRadius: 9, border: "1px solid #007aff", background: "#eaf3ff", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#0067dc" }}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", margin: "8px 0 16px", padding: "8px 11px", borderRadius: 8, border: "1px solid #0071e3", background: "#f0f5fc", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#0071e3", transition: "all 0.14s ease" }}
         >
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}><ImageIcon size={15} /> Add image / signature</span>
-          <span>＋</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}><ImageIcon size={14} /> Add image / signature</span>
+          <span style={{ fontSize: 14 }}>＋</span>
         </button>
 
-        <strong style={{ fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#8e8e93", display: "block", marginTop: 10, marginBottom: 6 }}>Spreadsheet text columns</strong>
-        {headers.map((header) => <button key={header} onClick={() => setSelected(onAdd(header, page, "text"))} style={{ display: "block", width: "100%", textAlign: "left", margin: "6px 0", padding: "8px 9px", borderRadius: 8, border: "1px solid #e5e5ea", background: "#fff", cursor: "pointer", fontSize: 12 }}>{header}<span style={{ float: "right", color: "#007aff" }}>＋</span></button>)}
-        {!headers.length && <p style={{ fontSize: 12, color: "#b33e36" }}>Import your CSV or Excel file first.</p>}
-        <div style={{ marginTop: 18, fontSize: 11, color: "#6e6e73" }}>Placed: {fields.length}</div>
-        <p style={{ marginTop: 15, fontSize: 10, color: "#6e6e73", lineHeight: 1.5 }}>Tip: select a field and use arrow keys to move it by 1 {units}. Shift + arrow moves 10 {units}; Alt + arrow moves 0.1 {units}.</p>
+        <strong style={{ fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#86868b", display: "block", marginTop: 12, marginBottom: 8, fontWeight: 600 }}>Spreadsheet text columns</strong>
+        {headers.map((header) => <button key={header} onClick={() => setSelected(onAdd(header, page, "text"))} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", textAlign: "left", margin: "5px 0", padding: "7px 10px", borderRadius: 7, border: "1px solid #e5e5ea", background: "#fff", cursor: "pointer", fontSize: 12, color: "#1d1d1f", transition: "all 0.12s ease" }}><span>{header}</span><span style={{ color: "#0071e3", fontSize: 13, fontWeight: 600 }}>＋</span></button>)}
+        {!headers.length && <p style={{ fontSize: 12, color: "#ff3b30", marginTop: 6 }}>Import your CSV or Excel file first.</p>}
+        <div style={{ marginTop: 18, fontSize: 11, color: "#86868b", fontWeight: 500 }}>Placed on document: {fields.length}</div>
+        <p style={{ marginTop: 14, fontSize: 11, color: "#86868b", lineHeight: 1.5 }}>Tip: Select a field and use arrow keys to move 1 {units}. Shift + arrows moves 10 {units}.</p>
       </aside>
 
       <div style={{ minWidth: 0, minHeight: 0, height: "100%", padding: 14, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 10, fontSize: 12, color: "#6e6e73" }}>
-          <span>Drag the page to pan · drag a field to position · arrows move precisely</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            <button type="button" style={{ ...toolButtonStyle, opacity: canUndo ? 1 : 0.45 }} disabled={!canUndo} onClick={onUndo} aria-label="Undo field edit" title="Undo (Ctrl/⌘ Z)"><Undo2 size={14} /></button>
-            <button type="button" style={{ ...toolButtonStyle, opacity: canRedo ? 1 : 0.45 }} disabled={!canRedo} onClick={onRedo} aria-label="Redo field edit" title="Redo (Ctrl/⌘ Shift Z · Ctrl Y)"><Redo2 size={14} /></button>
-            <button style={toolButtonStyle} disabled={page <= 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>‹</button>
-            Page {page + 1} / {pageCount}
-            <button style={toolButtonStyle} disabled={page >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>›</button>
-            <span style={{ marginLeft: 8 }} />
-            <button style={toolButtonStyle} onClick={() => changeZoom(zoom - 10)} aria-label="Zoom out">−</button>
-            <button style={{ ...toolButtonStyle, minWidth: 48 }} onClick={() => changeZoom(100)} title="Reset to 100%">{zoom}%</button>
-            <button style={toolButtonStyle} onClick={() => changeZoom(zoom + 10)} aria-label="Zoom in">＋</button>
-            <button style={toolButtonStyle} onClick={() => changeZoom(100)} title="Fit the page width to the workspace">Fit width</button>
-            <button style={toolButtonStyle} onClick={fitPage} title="Fit the entire page in the workspace">Fit page</button>
+          <span>Drag canvas to pan · drag field to place · arrows move precisely</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+            <span style={{ display: "inline-flex", borderRadius: 7, border: "1px solid #d2d2d7", overflow: "hidden", background: "#fff" }}>
+              <button type="button" style={{ ...toolButtonStyle, border: 0, borderRadius: 0, borderRight: "1px solid #e5e5ea", opacity: canUndo ? 1 : 0.4 }} disabled={!canUndo} onClick={onUndo} aria-label="Undo" title="Undo (Ctrl/⌘ Z)"><Undo2 size={13} /></button>
+              <button type="button" style={{ ...toolButtonStyle, border: 0, borderRadius: 0, opacity: canRedo ? 1 : 0.4 }} disabled={!canRedo} onClick={onRedo} aria-label="Redo" title="Redo (Ctrl/⌘ Shift Z · Ctrl Y)"><Redo2 size={13} /></button>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 7, border: "1px solid #d2d2d7", overflow: "hidden", background: "#fff", fontSize: 12, fontWeight: 550 }}>
+              <button style={{ ...toolButtonStyle, border: 0, borderRadius: 0, borderRight: "1px solid #e5e5ea" }} disabled={page <= 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>‹</button>
+              <span style={{ padding: "0 8px", color: "#1d1d1f", whiteSpace: "nowrap" }}>Page {page + 1} / {pageCount}</span>
+              <button style={{ ...toolButtonStyle, border: 0, borderRadius: 0, borderLeft: "1px solid #e5e5ea" }} disabled={page >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>›</button>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", borderRadius: 7, border: "1px solid #d2d2d7", overflow: "hidden", background: "#fff", fontSize: 12 }}>
+              <button style={{ ...toolButtonStyle, border: 0, borderRadius: 0, borderRight: "1px solid #e5e5ea" }} onClick={() => changeZoom(zoom - 10)} aria-label="Zoom out">−</button>
+              <button style={{ ...toolButtonStyle, border: 0, borderRadius: 0, minWidth: 44, borderRight: "1px solid #e5e5ea", fontWeight: 550 }} onClick={() => changeZoom(100)} title="Reset to 100%">{zoom}%</button>
+              <button style={{ ...toolButtonStyle, border: 0, borderRadius: 0 }} onClick={() => changeZoom(zoom + 10)} aria-label="Zoom in">＋</button>
+            </span>
+            <span style={{ display: "inline-flex", borderRadius: 7, border: "1px solid #d2d2d7", overflow: "hidden", background: "#fff" }}>
+              <button style={{ ...toolButtonStyle, border: 0, borderRadius: 0, borderRight: "1px solid #e5e5ea" }} onClick={fitPage} title="Fit entire page">Fit page</button>
+              <button style={{ ...toolButtonStyle, border: 0, borderRadius: 0 }} onClick={() => changeZoom(100)} title="100% size">100%</button>
+            </span>
             <button
               type="button"
               style={{
                 ...toolButtonStyle,
-                background: showGuides ? "#fff" : "#eef5ff",
-                borderColor: showGuides ? "#e5e5ea" : "#007aff",
-                color: showGuides ? "#1d1d1f" : "#007aff",
+                background: showGuides ? "#f0f5fc" : "#fff",
+                borderColor: showGuides ? "#0071e3" : "#d2d2d7",
+                color: showGuides ? "#0071e3" : "#1d1d1f",
               }}
               onClick={() => {
                 setShowGuides((prev) => !prev);
@@ -504,9 +538,16 @@ export default function TemplateDesigner({
               }}
               title="Toggle field boundary guides (outlines are for positioning only and never printed on final documents)"
             >
-              {showGuides ? "Hide guides" : "Show guides"}
+              {showGuides ? "Guides on" : "Guides off"}
             </button>
-            <button type="button" style={toolButtonStyle} onClick={() => setExpanded((value) => !value)} title={expanded ? "Close expanded editor (Esc)" : "Open larger editor"}>{expanded ? <><Minimize2 size={14} /> Close</> : <><Maximize2 size={14} /> Expand</>}</button>
+            <button
+              type="button"
+              style={toolButtonStyle}
+              onClick={() => setExpanded((value) => !value)}
+              title={expanded ? "Close expanded editor (Esc)" : "Open larger editor"}
+            >
+              {expanded ? <><Minimize2 size={13} /> Close</> : <><Maximize2 size={13} /> Expand</>}
+            </button>
           </span>
         </div>
         <div ref={viewportRef} tabIndex={0} aria-label="Document canvas. Drag the page to pan; select a field and use arrow keys to move it." onPointerDown={beginPan} onPointerMove={panTo} onPointerUp={endPan} onPointerCancel={endPan} style={{ minWidth: 0, minHeight: 0, flex: "1 1 0", overflow: "auto", overscrollBehavior: "contain", cursor: panActive ? "grabbing" : "grab", touchAction: "none", background: "#f5f5f7", borderRadius: 10, padding: 14, scrollbarGutter: "stable", userSelect: "none" }}>
@@ -559,7 +600,7 @@ export default function TemplateDesigner({
                       background: "transparent",
                       borderRadius: 4,
                       cursor: "move",
-                      outline: isSelected ? "2px solid #007aff" : (showGuides ? "1px dashed #007affb0" : "none"),
+                      outline: isSelected ? "2px solid #0071e3" : (showGuides ? "1px dashed rgba(0, 113, 227, 0.55)" : "none"),
                       outlineOffset: 1,
                       userSelect: "none",
                       display: "flex",
@@ -576,9 +617,9 @@ export default function TemplateDesigner({
                           style={{ width: "100%", height: "100%", objectFit: field.fit ?? "contain", pointerEvents: "none" }}
                         />
                       ) : (
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", background: "#f0f5ffcc", color: "#0067dc", fontSize: 10, padding: 4 }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", background: "rgba(240, 245, 252, 0.9)", color: "#0071e3", fontSize: 11, padding: 4 }}>
                           <ImageIcon size={15} />
-                          <span style={{ marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "95%" }}>{field.name || field.column || "Image"}</span>
+                          <span style={{ marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "95%", fontWeight: 500 }}>{field.name || field.column || "Image"}</span>
                         </div>
                       )}
                     </div>
@@ -588,30 +629,34 @@ export default function TemplateDesigner({
                         <div
                           style={{
                             position: "absolute",
-                            bottom: -22,
+                            bottom: -24,
                             left: "50%",
                             transform: "translateX(-50%)",
-                            background: "#1d1d1f",
+                            background: "rgba(29, 29, 31, 0.92)",
+                            backdropFilter: "blur(8px)",
                             color: "#fff",
                             fontSize: 10,
-                            padding: "2px 6px",
-                            borderRadius: 4,
+                            fontWeight: 500,
+                            fontVariantNumeric: "tabular-nums",
+                            padding: "2px 7px",
+                            borderRadius: 999,
                             whiteSpace: "nowrap",
                             pointerEvents: "none",
                             zIndex: 20,
                             lineHeight: "14px",
-                            boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
+                            boxShadow: "0 2px 6px rgba(0,0,0,0.25)",
                           }}
                         >
                           {widthPoints} × {heightPoints} {units}
                         </div>
 
+                        {/* 4 Corner Handles */}
                         <span
                           onPointerDown={(e) => startResize(e, field, "nw")}
                           onPointerMove={resizeTo}
                           onPointerUp={finishResize}
                           onPointerCancel={finishResize}
-                          style={{ position: "absolute", top: -5, left: -5, width: 10, height: 10, background: "#fff", border: "2px solid #007aff", borderRadius: "50%", cursor: "nwse-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          style={{ position: "absolute", top: -5, left: -5, width: 9, height: 9, background: "#fff", border: "1.5px solid #0071e3", borderRadius: 2, cursor: "nwse-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
                           title="Resize top-left"
                         />
                         <span
@@ -619,7 +664,7 @@ export default function TemplateDesigner({
                           onPointerMove={resizeTo}
                           onPointerUp={finishResize}
                           onPointerCancel={finishResize}
-                          style={{ position: "absolute", top: -5, right: -5, width: 10, height: 10, background: "#fff", border: "2px solid #007aff", borderRadius: "50%", cursor: "nesw-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          style={{ position: "absolute", top: -5, right: -5, width: 9, height: 9, background: "#fff", border: "1.5px solid #0071e3", borderRadius: 2, cursor: "nesw-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
                           title="Resize top-right"
                         />
                         <span
@@ -627,7 +672,7 @@ export default function TemplateDesigner({
                           onPointerMove={resizeTo}
                           onPointerUp={finishResize}
                           onPointerCancel={finishResize}
-                          style={{ position: "absolute", bottom: -5, right: -5, width: 10, height: 10, background: "#fff", border: "2px solid #007aff", borderRadius: "50%", cursor: "nwse-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          style={{ position: "absolute", bottom: -5, right: -5, width: 9, height: 9, background: "#fff", border: "1.5px solid #0071e3", borderRadius: 2, cursor: "nwse-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
                           title="Resize bottom-right"
                         />
                         <span
@@ -635,15 +680,17 @@ export default function TemplateDesigner({
                           onPointerMove={resizeTo}
                           onPointerUp={finishResize}
                           onPointerCancel={finishResize}
-                          style={{ position: "absolute", bottom: -5, left: -5, width: 10, height: 10, background: "#fff", border: "2px solid #007aff", borderRadius: "50%", cursor: "nesw-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          style={{ position: "absolute", bottom: -5, left: -5, width: 9, height: 9, background: "#fff", border: "1.5px solid #0071e3", borderRadius: 2, cursor: "nesw-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
                           title="Resize bottom-left"
                         />
+
+                        {/* 4 Edge Handles */}
                         <span
                           onPointerDown={(e) => startResize(e, field, "e")}
                           onPointerMove={resizeTo}
                           onPointerUp={finishResize}
                           onPointerCancel={finishResize}
-                          style={{ position: "absolute", top: "50%", right: -4, transform: "translateY(-50%)", width: 8, height: 12, background: "#fff", border: "2px solid #007aff", borderRadius: 2, cursor: "ew-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          style={{ position: "absolute", top: "50%", right: -4, transform: "translateY(-50%)", width: 7, height: 11, background: "#fff", border: "1.5px solid #0071e3", borderRadius: 2, cursor: "ew-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
                           title="Resize width"
                         />
                         <span
@@ -651,7 +698,7 @@ export default function TemplateDesigner({
                           onPointerMove={resizeTo}
                           onPointerUp={finishResize}
                           onPointerCancel={finishResize}
-                          style={{ position: "absolute", top: "50%", left: -4, transform: "translateY(-50%)", width: 8, height: 12, background: "#fff", border: "2px solid #007aff", borderRadius: 2, cursor: "ew-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          style={{ position: "absolute", top: "50%", left: -4, transform: "translateY(-50%)", width: 7, height: 11, background: "#fff", border: "1.5px solid #0071e3", borderRadius: 2, cursor: "ew-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
                           title="Resize width"
                         />
                         <span
@@ -659,7 +706,7 @@ export default function TemplateDesigner({
                           onPointerMove={resizeTo}
                           onPointerUp={finishResize}
                           onPointerCancel={finishResize}
-                          style={{ position: "absolute", bottom: -4, left: "50%", transform: "translateX(-50%)", width: 12, height: 8, background: "#fff", border: "2px solid #007aff", borderRadius: 2, cursor: "ns-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          style={{ position: "absolute", bottom: -4, left: "50%", transform: "translateX(-50%)", width: 11, height: 7, background: "#fff", border: "1.5px solid #0071e3", borderRadius: 2, cursor: "ns-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
                           title="Resize height"
                         />
                         <span
@@ -667,7 +714,7 @@ export default function TemplateDesigner({
                           onPointerMove={resizeTo}
                           onPointerUp={finishResize}
                           onPointerCancel={finishResize}
-                          style={{ position: "absolute", top: -4, left: "50%", transform: "translateX(-50%)", width: 12, height: 8, background: "#fff", border: "2px solid #007aff", borderRadius: 2, cursor: "ns-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          style={{ position: "absolute", top: -4, left: "50%", transform: "translateX(-50%)", width: 11, height: 7, background: "#fff", border: "1.5px solid #0071e3", borderRadius: 2, cursor: "ns-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.25)" }}
                           title="Resize height"
                         />
                       </>
@@ -687,7 +734,7 @@ export default function TemplateDesigner({
                 onPointerMove={dragTo}
                 onPointerUp={finishDrag}
                 onPointerCancel={finishDrag}
-                style={{ position: "absolute", left: `${position.x * 100}%`, top: `${position.y * 100}%`, transform: field.align === "center" ? "translateX(-50%)" : field.align === "right" ? "translateX(-100%)" : "none", padding: 0, lineHeight: 1, whiteSpace: "pre", textAlign: field.align, color: field.color, fontSize: `${Math.max(4, field.size * canvasWidth)}px`, fontFamily: cssFamily, fontWeight: field.bold ? 700 : 400, fontStyle: field.italic ? "italic" : "normal", textDecoration: field.underline ? "underline" : "none", background: "transparent", border: 0, borderRadius: 0, cursor: "move", outline: isSelected ? "1px solid #007aff" : (showGuides ? "1px dashed #007aff80" : "none"), outlineOffset: 2, userSelect: "none" }}
+                style={{ position: "absolute", left: `${position.x * 100}%`, top: `${position.y * 100}%`, transform: field.align === "center" ? "translateX(-50%)" : field.align === "right" ? "translateX(-100%)" : "none", padding: 0, lineHeight: 1, whiteSpace: "pre", textAlign: field.align, color: field.color, fontSize: `${Math.max(4, field.size * canvasWidth)}px`, fontFamily: cssFamily, fontWeight: field.bold ? 700 : 400, fontStyle: field.italic ? "italic" : "normal", textDecoration: field.underline ? "underline" : "none", background: "transparent", border: 0, borderRadius: 0, cursor: "move", outline: isSelected ? "1.5px solid #0071e3" : (showGuides ? "1px dashed rgba(0, 113, 227, 0.45)" : "none"), outlineOffset: 2, userSelect: "none" }}
               >{text}</button>;
             })}
           </div>
@@ -777,7 +824,7 @@ export default function TemplateDesigner({
                         </label>
                       </div>
                     ) : (
-                      <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: 8, border: "1.5px dashed #007aff80", borderRadius: 8, background: "#f5f9ff", cursor: "pointer", color: "#007aff", fontSize: 11 }}>
+                      <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 10px", border: "1.5px dashed rgba(0, 113, 227, 0.4)", borderRadius: 8, background: "#f0f5fc", cursor: "pointer", color: "#0071e3", fontSize: 12, fontWeight: 550, transition: "all 0.14s ease" }}>
                         <Upload size={13} /> Upload shared image
                         <input type="file" accept="image/*" hidden onChange={(e) => {
                           const file = e.target.files?.[0];
@@ -905,14 +952,17 @@ export default function TemplateDesigner({
                   Preserve aspect ratio
                 </label>
 
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, cursor: "pointer" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, cursor: "pointer", fontWeight: 550, color: "#1d1d1f" }}>
                   <input
                     type="checkbox"
-                    checked={activeField.required !== false}
+                    checked={Boolean(activeField.required)}
                     onChange={(event) => onUpdate(activeField.id, { required: event.target.checked })}
                   />
-                  Require image for every record
+                  Require image for every record (mandatory)
                 </label>
+                <span style={{ display: "block", color: "#8e8e93", fontSize: 10, marginTop: -6, marginLeft: 20 }}>
+                  Optional by default. Uncheck to allow records without this image to generate cleanly.
+                </span>
               </>
             ) : (
               <>

@@ -128,7 +128,7 @@ export async function renderPositionedTemplate(
       if (field.type === "image") {
         const imageBlob = assets?.[field.id];
         if (!imageBlob) {
-          if (field.required !== false) {
+          if (field.required === true) {
             throw new Error(`Missing required image for field “${field.name || field.column || "Image"}”.`);
           }
           continue;

@@ -264,7 +264,7 @@ export default function Workbench() {
     return batch.fields.filter((field) => {
       if (field.type === "image") {
         if (field.imageSourceMode === "shared") {
-          return field.required !== false && (!field.sharedAssetId || !batch.assets?.[field.sharedAssetId]);
+          return field.required === true && (!field.sharedAssetId || !batch.assets?.[field.sharedAssetId]);
         }
         return false;
       }
@@ -278,7 +278,8 @@ export default function Workbench() {
     const missing: string[] = [];
     for (const field of batch.fields) {
       if (field.type === "image") {
-        if (field.required === false) continue;
+        // Image and signature fields are optional by default. Only require if field.required === true.
+        if (field.required !== true) continue;
         if (field.imageSourceMode === "shared") {
           const assetId = field.sharedAssetId ?? batch.sharedAssets?.[field.id];
           if (!assetId || !batch.assets?.[assetId]) {
@@ -618,7 +619,7 @@ export default function Workbench() {
       align: "left",
       fit: "contain",
       preserveAspectRatio: true,
-      required: true,
+      required: false,
     } : {
       id: createId(),
       type: "text",
@@ -1015,19 +1016,36 @@ export default function Workbench() {
                 <div className="validation-summary"><Stat label="Records" value={counts.total} /><Stat label="Ready" value={counts.valid} color="#287d48" /><Stat label="Need attention" value={invalidRowIds.size} color={invalidRowIds.size ? "#a25243" : undefined} /><Stat label="Excluded" value={counts.excluded} /></div>
                 {hasUnexcludedInvalid && <div className="notice warn"><CircleAlert size={14} /><span>{invalidRowIds.size} included record{invalidRowIds.size === 1 ? " is" : "s are"} missing required values. Correct the cells or exclude those rows to continue.</span></div>}
                 {recordImageFields.length > 0 && (
-                  <div style={{ marginTop: 14, marginBottom: 14, padding: "14px 18px", border: "1px solid #e5e5ea", borderRadius: 8, background: "#fafafa" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                  <div className="recipient-assets-card">
+                    <div className="recipient-assets-head">
                       <div>
-                        <strong style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
+                        <strong>
                           <ImageIcon size={15} /> Recipient images &amp; signatures
                         </strong>
-                        <p className="subtle" style={{ margin: "3px 0 0 0", fontSize: 13 }}>
+                        <p>
                           Upload individual images or signatures for {recordImageFields.map((f) => f.name || f.column).join(", ")}. Files match by filename (e.g. <code>rahul.png</code>) or record ID.
+                          {" "}<span style={{ color: "#287d48", fontWeight: 600 }}>Optional</span> — records without an image will generate with this space clean.
                         </p>
                       </div>
-                      <button className="button secondary small" disabled={busy} onClick={() => batchImageInput.current?.click()}>
-                        <Upload size={13} /> Upload recipient images
-                      </button>
+                      <div className="button-row" style={{ margin: 0, gap: 8 }}>
+                        <button className="button secondary small" disabled={busy} onClick={() => batchImageInput.current?.click()}>
+                          <Upload size={13} /> Upload recipient images
+                        </button>
+                        {recordImageFields.map((field) => (
+                          <button
+                            key={field.id}
+                            type="button"
+                            className="button ghost small"
+                            title="If you want the same signature/image on every document, switch to shared mode"
+                            onClick={() => {
+                              void updatePositionedField(field.id, { imageSourceMode: "shared", required: false });
+                              say(`Field “${field.name || "Signature"}” switched to shared mode.`);
+                            }}
+                          >
+                            Make shared for all
+                          </button>
+                        ))}
+                      </div>
                       <input
                         ref={batchImageInput}
                         type="file"
@@ -1069,9 +1087,11 @@ export default function Workbench() {
                             <td key={field.id} style={{ minWidth: 120 }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 {asset?.dataUrl ? (
-                                  <img src={asset.dataUrl} alt={asset.name} style={{ width: 28, height: 28, objectFit: "contain", border: "1px solid #ddd", borderRadius: 4, background: "#fff" }} />
+                                  <img src={asset.dataUrl} alt={asset.name} className="cell-image-preview" />
                                 ) : (
-                                  <span style={{ fontSize: 11, color: "#8e8e93", fontStyle: "italic" }}>None</span>
+                                  <span style={{ fontSize: 11, color: "#8e8e93", fontStyle: "italic" }}>
+                                    {field.required ? "Required" : "Optional"}
+                                  </span>
                                 )}
                                 <label className="small-link" style={{ cursor: "pointer", fontSize: 11 }}>
                                   {asset ? "Change" : "Upload"}
@@ -1116,14 +1136,14 @@ export default function Workbench() {
               <div className="card-head"><div><div className="step-kicker">STEP 05 · GENERATE</div><h2>{allDone ? "Your batch is ready" : generating ? "Creating your documents" : "Generate personalized PDFs"}</h2><p>{allDone ? "Download individual files, a ZIP archive, or one combined print PDF." : "Your reviewed records will become individual PDFs, one document per record."}</p></div><span className="format-badge"><FileCheck2 size={13} /> {counts.valid} eligible</span></div>
               <div className="card-body">
                 {cleanupCountdown !== null && (
-                  <div className="notice warn" style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                  <div className="cleanup-countdown-banner">
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <Clock size={16} />
                       <span>
-                        Download started. For your privacy, temporary document data will be cleared in{" "}
-                        <strong>
+                        Download started. Temporary document data will be cleared in{" "}
+                        <span className="cleanup-countdown-timer">
                           {Math.floor(cleanupCountdown / 60)}:{String(cleanupCountdown % 60).padStart(2, "0")}
-                        </strong>.
+                        </span>
                       </span>
                     </div>
                     <div className="button-row" style={{ margin: 0, gap: 6 }}>

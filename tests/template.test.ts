@@ -214,5 +214,10 @@ describe("printable PDF rendering", () => {
     const output = await renderPositionedTemplate(template, "pdf", [optionalField], {}, {});
     const pdf = await PDFDocument.load(await output.arrayBuffer());
     expect(pdf.getPageCount()).toBe(1);
+
+    const defaultField: PositionedField = { ...requiredField, required: undefined };
+    const defaultOutput = await renderPositionedTemplate(template, "pdf", [defaultField], {}, {});
+    const defaultPdf = await PDFDocument.load(await defaultOutput.arrayBuffer());
+    expect(defaultPdf.getPageCount()).toBe(1);
   });
 });
