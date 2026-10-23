@@ -87,6 +87,7 @@ export default function TemplateDesigner({
   const [zoom, setZoom] = useState(100);
   const initialFitDoneRef = useRef(false);
   const [snap, setSnap] = useState(false);
+  const [showGuides, setShowGuides] = useState(true);
   const [expanded, setExpanded] = useState(true);
   const [panActive, setPanActive] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(800);
@@ -489,12 +490,34 @@ export default function TemplateDesigner({
             <button style={toolButtonStyle} onClick={() => changeZoom(zoom + 10)} aria-label="Zoom in">＋</button>
             <button style={toolButtonStyle} onClick={() => changeZoom(100)} title="Fit the page width to the workspace">Fit width</button>
             <button style={toolButtonStyle} onClick={fitPage} title="Fit the entire page in the workspace">Fit page</button>
+            <button
+              type="button"
+              style={{
+                ...toolButtonStyle,
+                background: showGuides ? "#fff" : "#eef5ff",
+                borderColor: showGuides ? "#e5e5ea" : "#007aff",
+                color: showGuides ? "#1d1d1f" : "#007aff",
+              }}
+              onClick={() => {
+                setShowGuides((prev) => !prev);
+                if (showGuides) setSelected(null);
+              }}
+              title="Toggle field boundary guides (outlines are for positioning only and never printed on final documents)"
+            >
+              {showGuides ? "Hide guides" : "Show guides"}
+            </button>
             <button type="button" style={toolButtonStyle} onClick={() => setExpanded((value) => !value)} title={expanded ? "Close expanded editor (Esc)" : "Open larger editor"}>{expanded ? <><Minimize2 size={14} /> Close</> : <><Maximize2 size={14} /> Expand</>}</button>
           </span>
         </div>
         <div ref={viewportRef} tabIndex={0} aria-label="Document canvas. Drag the page to pan; select a field and use arrow keys to move it." onPointerDown={beginPan} onPointerMove={panTo} onPointerUp={endPan} onPointerCancel={endPan} style={{ minWidth: 0, minHeight: 0, flex: "1 1 0", overflow: "auto", overscrollBehavior: "contain", cursor: panActive ? "grabbing" : "grab", touchAction: "none", background: "#f5f5f7", borderRadius: 10, padding: 14, scrollbarGutter: "stable", userSelect: "none" }}>
           <div style={{ width: `${pageDisplayWidth}px`, minHeight: "100%", margin: "0 auto" }}>
-          <div ref={pageSurfaceRef} style={{ position: "relative", width: "100%", boxShadow: "0 5px 24px #1d1d1f24", lineHeight: 0, touchAction: "none", background: "white", cursor: panActive ? "grabbing" : "grab" }}>
+          <div
+            ref={pageSurfaceRef}
+            onClick={(e) => {
+              if (e.target === e.currentTarget || e.target === canvasRef.current) setSelected(null);
+            }}
+            style={{ position: "relative", width: "100%", boxShadow: "0 5px 24px #1d1d1f24", lineHeight: 0, touchAction: "none", background: "white", cursor: panActive ? "grabbing" : "grab" }}
+          >
             <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "auto", background: "white" }} />
             {currentFields.map((field) => {
               const isSelected = selected === field.id;
@@ -536,7 +559,7 @@ export default function TemplateDesigner({
                       background: "transparent",
                       borderRadius: 4,
                       cursor: "move",
-                      outline: isSelected ? "2px solid #007aff" : "1px dashed #007affb0",
+                      outline: isSelected ? "2px solid #007aff" : (showGuides ? "1px dashed #007affb0" : "none"),
                       outlineOffset: 1,
                       userSelect: "none",
                       display: "flex",
@@ -664,7 +687,7 @@ export default function TemplateDesigner({
                 onPointerMove={dragTo}
                 onPointerUp={finishDrag}
                 onPointerCancel={finishDrag}
-                style={{ position: "absolute", left: `${position.x * 100}%`, top: `${position.y * 100}%`, transform: field.align === "center" ? "translateX(-50%)" : field.align === "right" ? "translateX(-100%)" : "none", padding: 0, lineHeight: 1, whiteSpace: "pre", textAlign: field.align, color: field.color, fontSize: `${Math.max(4, field.size * canvasWidth)}px`, fontFamily: cssFamily, fontWeight: field.bold ? 700 : 400, fontStyle: field.italic ? "italic" : "normal", textDecoration: field.underline ? "underline" : "none", background: "transparent", border: 0, borderRadius: 0, cursor: "move", outline: isSelected ? "1px solid #007aff" : "1px dashed #007aff80", outlineOffset: 2, userSelect: "none" }}
+                style={{ position: "absolute", left: `${position.x * 100}%`, top: `${position.y * 100}%`, transform: field.align === "center" ? "translateX(-50%)" : field.align === "right" ? "translateX(-100%)" : "none", padding: 0, lineHeight: 1, whiteSpace: "pre", textAlign: field.align, color: field.color, fontSize: `${Math.max(4, field.size * canvasWidth)}px`, fontFamily: cssFamily, fontWeight: field.bold ? 700 : 400, fontStyle: field.italic ? "italic" : "normal", textDecoration: field.underline ? "underline" : "none", background: "transparent", border: 0, borderRadius: 0, cursor: "move", outline: isSelected ? "1px solid #007aff" : (showGuides ? "1px dashed #007aff80" : "none"), outlineOffset: 2, userSelect: "none" }}
               >{text}</button>;
             })}
           </div>
