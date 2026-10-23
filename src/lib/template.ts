@@ -3,6 +3,7 @@ import PizZip from "pizzip";
 import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 import type { PositionedField, TemplateFormat } from "@/lib/types";
 import type { TemplateInspection } from "@/lib/types";
+import { ensurePdfCompatibleImage } from "@/lib/assets";
 
 const SUPPORTED_NAME = /^[\p{L}_][\p{L}\p{N}_. -]*$/u;
 const TOKEN_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
@@ -84,7 +85,13 @@ export function renderDocxTemplate(template: Blob, values: Record<string, string
   });
 }
 
-export async function renderPositionedTemplate(template: Blob, format: TemplateFormat, fields: PositionedField[], values: Record<string, string>): Promise<Blob> {
+export async function renderPositionedTemplate(
+  template: Blob,
+  format: TemplateFormat,
+  fields: PositionedField[],
+  values: Record<string, string>,
+  assets?: Record<string, Blob>
+): Promise<Blob> {
   const pdf = format === "pdf" ? await PDFDocument.load(await template.arrayBuffer()) : await PDFDocument.create();
   if (format === "image") {
     const bytes = new Uint8Array(await template.arrayBuffer());
@@ -92,57 +99,145 @@ export async function renderPositionedTemplate(template: Blob, format: TemplateF
     const dimensions = imagePixelDimensionsToPdfPoints(image.width, image.height);
     pdf.addPage([dimensions.width, dimensions.height]).drawImage(image, { x: 0, y: 0, width: dimensions.width, height: dimensions.height });
   }
-  if (!pdf.getPageCount()) throw new Error("The selected template has no printable pages.");
-  for (const field of fields) {
-    const page = pdf.getPage(Math.min(Math.max(0, field.page), pdf.getPageCount() - 1));
-    const value = String(values[field.id] ?? "");
-    if (!value) continue;
-    const family = field.fontFamily ?? "Helvetica";
-    const fontName = family === "TimesRoman"
-      ? (field.bold ? (field.italic ? StandardFonts.TimesRomanBoldItalic : StandardFonts.TimesRomanBold) : (field.italic ? StandardFonts.TimesRomanItalic : StandardFonts.TimesRoman))
-      : family === "Courier"
-        ? (field.bold ? (field.italic ? StandardFonts.CourierBoldOblique : StandardFonts.CourierBold) : (field.italic ? StandardFonts.CourierOblique : StandardFonts.Courier))
-        : (field.bold ? (field.italic ? StandardFonts.HelveticaBoldOblique : StandardFonts.HelveticaBold) : (field.italic ? StandardFonts.HelveticaOblique : StandardFonts.Helvetica));
-    const font = await pdf.embedFont(fontName);
+  const pageCount = pdf.getPageCount();
+  if (!pageCount) throw new Error("The selected template has no printable pages.");
+
+  for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+    const page = pdf.getPage(pageIndex);
     const crop = page.getCropBox();
     const rotation = ((page.getRotation().angle % 360) + 360) % 360;
     const displayWidth = rotation === 90 || rotation === 270 ? crop.height : crop.width;
     const displayHeight = rotation === 90 || rotation === 270 ? crop.width : crop.height;
-    if (/[\r\n]/.test(value)) throw new Error(`The value for “${field.column}” contains multiple lines. EasyDocs currently places one line per field.`);
-    const fontSize = Math.max(4, field.size * displayWidth);
-    let width: number;
-    let ascent: number;
-    try {
-      font.encodeText(value);
-      width = font.widthOfTextAtSize(value, fontSize);
-      ascent = font.heightAtSize(fontSize, { descender: false });
-    } catch {
-      throw new Error(`The value for “${field.column}” contains characters the built-in PDF fonts cannot render. Hindi and other scripts need font support that is not available yet; use supported Latin characters for this field.`);
-    }
-    const { x: displayX, baselineFromTop } = getFieldPdfPosition(field, displayWidth, displayHeight, width, ascent);
-    if (displayX < 0 || displayX + width > displayWidth || field.y < 0 || field.y * displayHeight + fontSize > displayHeight) {
-      throw new Error(`The value for “${field.column}” extends beyond the page. Move the field inward or reduce its font size.`);
-    }
+
     const toPdfPoint = (x: number, yFromTop: number) => {
       if (rotation === 90) return { x: crop.x + yFromTop, y: crop.y + x };
       if (rotation === 180) return { x: crop.x + crop.width - x, y: crop.y + yFromTop };
       if (rotation === 270) return { x: crop.x + crop.width - yFromTop, y: crop.y + crop.height - x };
       return { x: crop.x + x, y: crop.y + crop.height - yFromTop };
     };
-    const origin = toPdfPoint(displayX, baselineFromTop);
-    const [r, g, b] = [1, 3, 5].map((offset) => parseInt(field.color.slice(offset, offset + 2), 16) / 255);
-    page.drawText(value, {
-      x: origin.x,
-      y: origin.y,
-      size: fontSize,
-      font,
-      color: rgb(r, g, b),
-      rotate: degrees(rotation),
+
+    // Filter fields according to pageScope ("all", "selected", or "current")
+    const pageFields = fields.filter((field) => {
+      const scope = field.pageScope ?? "current";
+      if (scope === "all") return true;
+      if (scope === "selected") return (field.targetPages ?? [field.page]).includes(pageIndex);
+      return field.page === pageIndex;
     });
-    if (field.underline) {
-      const lineY = baselineFromTop + Math.max(0.8, fontSize * 0.06);
-      page.drawLine({ start: toPdfPoint(displayX, lineY), end: toPdfPoint(displayX + width, lineY), thickness: Math.max(0.5, fontSize * 0.04), color: rgb(r, g, b) });
+
+    for (const field of pageFields) {
+      if (field.type === "image") {
+        const imageBlob = assets?.[field.id];
+        if (!imageBlob) {
+          if (field.required !== false) {
+            throw new Error(`Missing required image for field “${field.name || field.column || "Image"}”.`);
+          }
+          continue;
+        }
+
+        const { bytes, format: imgFormat } = await ensurePdfCompatibleImage(imageBlob);
+        const embeddedImage = imgFormat === "png" ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
+
+        const boxWidth = Math.max(4, (field.width ?? 0.2) * displayWidth);
+        const boxHeight = Math.max(4, (field.height ?? 0.1) * displayHeight);
+        const anchorX = field.x * displayWidth;
+        const anchorY = field.y * displayHeight;
+
+        const imgAspect = embeddedImage.width / embeddedImage.height;
+        const boxAspect = boxWidth / boxHeight;
+
+        let drawWidth = boxWidth;
+        let drawHeight = boxHeight;
+
+        if (field.preserveAspectRatio !== false) {
+          if (field.fit === "cover") {
+            if (imgAspect > boxAspect) {
+              drawHeight = boxHeight;
+              drawWidth = boxHeight * imgAspect;
+            } else {
+              drawWidth = boxWidth;
+              drawHeight = boxWidth / imgAspect;
+            }
+          } else {
+            // Default "contain"
+            if (imgAspect > boxAspect) {
+              drawWidth = boxWidth;
+              drawHeight = boxWidth / imgAspect;
+            } else {
+              drawHeight = boxHeight;
+              drawWidth = boxHeight * imgAspect;
+            }
+          }
+        }
+
+        const displayX = anchorX + (boxWidth - drawWidth) / 2;
+        const displayY = anchorY + (boxHeight - drawHeight) / 2;
+
+        if (displayX < 0 || displayX + drawWidth > displayWidth || displayY < 0 || displayY + drawHeight > displayHeight) {
+          throw new Error(`The image for “${field.name || field.column || "Image"}” extends beyond the page. Move the field inward or reduce its dimensions.`);
+        }
+
+        let imgOrigin: { x: number; y: number };
+        if (rotation === 0) {
+          imgOrigin = toPdfPoint(displayX, displayY + drawHeight);
+        } else if (rotation === 90) {
+          imgOrigin = toPdfPoint(displayX, displayY + drawHeight);
+        } else if (rotation === 180) {
+          imgOrigin = toPdfPoint(displayX + drawWidth, displayY + drawHeight);
+        } else {
+          imgOrigin = toPdfPoint(displayX + drawWidth, displayY);
+        }
+
+        page.drawImage(embeddedImage, {
+          x: imgOrigin.x,
+          y: imgOrigin.y,
+          width: drawWidth,
+          height: drawHeight,
+          rotate: degrees(rotation),
+        });
+        continue;
+      }
+
+      // Text field rendering
+      const value = String(values[field.id] ?? "");
+      if (!value) continue;
+      const family = field.fontFamily ?? "Helvetica";
+      const fontName = family === "TimesRoman"
+        ? (field.bold ? (field.italic ? StandardFonts.TimesRomanBoldItalic : StandardFonts.TimesRomanBold) : (field.italic ? StandardFonts.TimesRomanItalic : StandardFonts.TimesRoman))
+        : family === "Courier"
+          ? (field.bold ? (field.italic ? StandardFonts.CourierBoldOblique : StandardFonts.CourierBold) : (field.italic ? StandardFonts.CourierOblique : StandardFonts.Courier))
+          : (field.bold ? (field.italic ? StandardFonts.HelveticaBoldOblique : StandardFonts.HelveticaBold) : (field.italic ? StandardFonts.HelveticaOblique : StandardFonts.Helvetica));
+      const font = await pdf.embedFont(fontName);
+      if (/[\r\n]/.test(value)) throw new Error(`The value for “${field.column}” contains multiple lines. EasyDocs currently places one line per field.`);
+      const fontSize = Math.max(4, field.size * displayWidth);
+      let width: number;
+      let ascent: number;
+      try {
+        font.encodeText(value);
+        width = font.widthOfTextAtSize(value, fontSize);
+        ascent = font.heightAtSize(fontSize, { descender: false });
+      } catch {
+        throw new Error(`The value for “${field.column}” contains characters the built-in PDF fonts cannot render. Hindi and other scripts need font support that is not available yet; use supported Latin characters for this field.`);
+      }
+      const { x: displayX, baselineFromTop } = getFieldPdfPosition(field, displayWidth, displayHeight, width, ascent);
+      if (displayX < 0 || displayX + width > displayWidth || field.y < 0 || field.y * displayHeight + fontSize > displayHeight) {
+        throw new Error(`The value for “${field.column}” extends beyond the page. Move the field inward or reduce its font size.`);
+      }
+      const origin = toPdfPoint(displayX, baselineFromTop);
+      const [r, g, b] = [1, 3, 5].map((offset) => parseInt(field.color.slice(offset, offset + 2), 16) / 255);
+      page.drawText(value, {
+        x: origin.x,
+        y: origin.y,
+        size: fontSize,
+        font,
+        color: rgb(r, g, b),
+        rotate: degrees(rotation),
+      });
+      if (field.underline) {
+        const lineY = baselineFromTop + Math.max(0.8, fontSize * 0.06);
+        page.drawLine({ start: toPdfPoint(displayX, lineY), end: toPdfPoint(displayX + width, lineY), thickness: Math.max(0.5, fontSize * 0.04), color: rgb(r, g, b) });
+      }
     }
   }
   return new Blob([new Uint8Array(await pdf.save())], { type: "application/pdf" });
 }
+

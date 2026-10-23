@@ -1,21 +1,23 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { PDFDocument } from "pdf-lib";
 import TemplateDesigner from "@/components/TemplateDesigner";
 import {
-  ArrowLeft, ArrowRight, Check, CheckCircle2, CircleAlert,
+  ArrowLeft, ArrowRight, Check, CheckCircle2, CircleAlert, Clock,
   FileArchive, FileCheck2, FileSpreadsheet, FileText, FolderOpen,
-  LoaderCircle, LockKeyhole, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Trash2,
+  Image as ImageIcon, LoaderCircle, LockKeyhole, Plus, RefreshCw, RotateCcw, ShieldCheck, Sparkles, Trash2,
   Upload, X, XCircle
 } from "lucide-react";
-import { cleanupExpiredData, clearBatch, db, loadBatch, persistBatch } from "@/lib/database";
+import { cancelSessionCleanup, cleanSessionData, cleanupExpiredData, clearBatch, db, loadBatch, persistBatch, saveAsset, scheduleSessionCleanup } from "@/lib/database";
 import { getFilenameValue, getRowValue, importCsv, importXlsx, validateDatasetFileSize } from "@/lib/dataset";
 import { convertDocumentToPdf, convertLegacyXlsToXlsx } from "@/lib/office-engine";
 import { createCombinedPdf, createPdfZip } from "@/lib/exports";
 import { renderPositionedTemplate } from "@/lib/template";
-import { createId, MAX_BATCH_ROWS, type Batch, type DataRow, type ImportResult, type PositionedField, type SavedTemplate, type TemplateFormat } from "@/lib/types";
+import { createDocumentAsset, matchAssetsToRows } from "@/lib/assets";
+import { createId, MAX_BATCH_ROWS, type Batch, type DataRow, type DocumentAsset, type FieldType, type ImportResult, type PositionedField, type SavedTemplate, type TemplateFormat } from "@/lib/types";
 
 const STEPS = [
   { title: "Template", caption: "Choose a document" },
@@ -31,6 +33,7 @@ function freshBatch(templateId: string | null = null): Batch {
     id: createId(), createdAt: now, updatedAt: now, status: "draft", templateId,
     datasetName: null, sourceType: null, headers: [], mapping: {}, placeholders: [], fields: [],
     unsupportedTokens: [], datasetWarnings: [], rowCount: 0,
+    assets: {}, sharedAssets: {},
   };
 }
 
@@ -59,6 +62,7 @@ function clearRowOutputs(rows: DataRow[]): DataRow[] {
     values: row.values,
     included: row.included,
     status: row.included ? "pending" : "excluded",
+    assets: row.assets,
   }));
 }
 
@@ -96,8 +100,11 @@ export default function Workbench() {
   const [recentTemplatePage, setRecentTemplatePage] = useState(false);
   const [designCanUndo, setDesignCanUndo] = useState(false);
   const [designCanRedo, setDesignCanRedo] = useState(false);
+  const [cleanupExpiresAt, setCleanupExpiresAt] = useState<number | null>(null);
+  const [cleanupCountdown, setCleanupCountdown] = useState<number | null>(null);
   const templateInput = useRef<HTMLInputElement>(null);
   const dataInput = useRef<HTMLInputElement>(null);
+  const batchImageInput = useRef<HTMLInputElement>(null);
   const cancelRef = useRef(false);
   const designUndoRef = useRef<PositionedField[][]>([]);
   const designRedoRef = useRef<PositionedField[][]>([]);
@@ -133,15 +140,26 @@ export default function Workbench() {
           if (!alive) return;
           if (saved) {
             const recoveredRows = saved.rows.map((row) => row.status === "processing" ? { ...row, status: "pending" as const, error: undefined } : row);
-            const recoveredBatch = { ...saved.batch, fields: saved.batch.fields ?? template?.fields ?? [], templateFormat: template?.format ?? saved.batch.templateFormat ?? "pdf", status: saved.batch.status === "generating" ? "partial" as const : saved.batch.status };
+            const recoveredBatch: Batch = {
+              ...saved.batch,
+              assets: saved.assets ?? saved.batch.assets ?? {},
+              sharedAssets: saved.batch.sharedAssets ?? {},
+              fields: saved.batch.fields ?? template?.fields ?? [],
+              templateFormat: template?.format ?? saved.batch.templateFormat ?? "pdf",
+              status: saved.batch.status === "generating" ? "partial" as const : saved.batch.status,
+            };
             setBatch(recoveredBatch);
             setRows(recoveredRows);
             setTemplateBlob(template?.blob ?? null);
             setTemplateName(template?.name ?? "");
             const hasGenerationState = ["generating", "partial", "complete", "failed"].includes(saved.batch.status);
             setStep(hasGenerationState ? 5 : recoveredRows.length ? (recoveredBatch.fields.length ? 4 : 3) : template ? 2 : 1);
+            if (recoveredBatch.cleanupExpiresAt && recoveredBatch.cleanupExpiresAt > Date.now()) {
+              setCleanupExpiresAt(recoveredBatch.cleanupExpiresAt);
+              setCleanupCountdown(Math.ceil((recoveredBatch.cleanupExpiresAt - Date.now()) / 1000));
+            }
             if (recoveredRows.some((row) => row.status === "processing")) {
-              await persistBatch(recoveredBatch, recoveredRows);
+              await persistBatch(recoveredBatch, recoveredRows, Object.values(recoveredBatch.assets ?? {}));
               say("Your batch was recovered. Completed files are still saved.");
             }
           }
@@ -157,12 +175,131 @@ export default function Workbench() {
 
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
-  const mappedMissing = useMemo(() => batch.placeholders.filter((placeholder) => !batch.mapping[placeholder] || !batch.headers.includes(batch.mapping[placeholder])), [batch]);
+  const commitBatch = useCallback(async (nextBatch: Batch, nextRows: DataRow[]) => {
+    setBatch(nextBatch);
+    setRows(nextRows);
+    try {
+      await persistBatch(nextBatch, nextRows, Object.values(nextBatch.assets ?? {}));
+    } catch (reason) {
+      setError(`Local storage could not save this change. ${reason instanceof Error ? reason.message : "Check available browser storage."}`);
+    }
+  }, []);
+
+  const newBatch = useCallback(async () => {
+    setError("");
+    setPreviewUrl("");
+    setPreviewError("");
+    setCleanupExpiresAt(null);
+    setCleanupCountdown(null);
+    let latestTemplate = await db.templates.orderBy("updatedAt").reverse().first();
+    if (latestTemplate && (!latestTemplate.format || latestTemplate.format === "docx")) {
+      latestTemplate = { ...latestTemplate, blob: await convertDocumentToPdf(latestTemplate.blob, latestTemplate.name, "docx"), format: "pdf" };
+      await db.templates.put(latestTemplate);
+    }
+    const next = freshBatch(latestTemplate?.id ?? null);
+    if (latestTemplate) {
+      next.fields = latestTemplate.fields ?? [];
+      next.placeholders = next.fields.map((field) => field.id);
+      next.mapping = Object.fromEntries(next.fields.map((field) => [field.id, field.column]));
+      next.templateFormat = latestTemplate.format ?? "docx";
+      setTemplateBlob(latestTemplate.blob);
+      setTemplateName(latestTemplate.name);
+      setStep(2);
+    } else {
+      setTemplateBlob(null);
+      setTemplateName("");
+      setStep(1);
+    }
+    await commitBatch(next, []);
+    setDatasetFile(null);
+    setSheetNames([]);
+    setSelectedSheet("");
+    setRecentTemplatePage(false);
+  }, [commitBatch]);
+
+  const executeSessionCleanup = useCallback(async () => {
+    if (generating || busy) return;
+    try {
+      await cleanSessionData(batch.id);
+      setCleanupExpiresAt(null);
+      setCleanupCountdown(null);
+      await newBatch();
+      say("Temporary session data cleared for your privacy.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to clear session data.");
+    }
+  }, [batch.id, busy, generating, newBatch, say]);
+
+  const cancelCleanup = useCallback(async () => {
+    await cancelSessionCleanup(batch.id);
+    setCleanupExpiresAt(null);
+    setCleanupCountdown(null);
+    say("Automatic session cleanup cancelled.");
+  }, [batch.id, say]);
+
+  const triggerDownloadCleanup = useCallback(async () => {
+    if (generating || busy) return;
+    const delayMs = 3 * 60 * 1000;
+    const expiresAt = await scheduleSessionCleanup(batch.id, delayMs);
+    setCleanupExpiresAt(expiresAt);
+    setCleanupCountdown(180);
+  }, [batch.id, busy, generating]);
+
+  useEffect(() => {
+    if (cleanupExpiresAt === null) return;
+    const tick = () => {
+      const remainingMs = cleanupExpiresAt - Date.now();
+      const remainingSecs = Math.max(0, Math.ceil(remainingMs / 1000));
+      setCleanupCountdown(remainingSecs);
+      if (remainingSecs <= 0) {
+        void executeSessionCleanup();
+      }
+    };
+    tick();
+    const interval = window.setInterval(tick, 1000);
+    return () => window.clearInterval(interval);
+  }, [cleanupExpiresAt, executeSessionCleanup]);
+
+  const mappedMissing = useMemo(() => {
+    return batch.fields.filter((field) => {
+      if (field.type === "image") {
+        if (field.imageSourceMode === "shared") {
+          return field.required !== false && (!field.sharedAssetId || !batch.assets?.[field.sharedAssetId]);
+        }
+        return false;
+      }
+      return !batch.mapping[field.id] || !batch.headers.includes(batch.mapping[field.id]);
+    }).map((f) => f.id);
+  }, [batch.fields, batch.mapping, batch.headers, batch.assets]);
+
   const unsupported = batch.unsupportedTokens;
-  const missingForRow = useCallback((row: DataRow) => batch.placeholders.filter((placeholder) => {
-    const header = batch.mapping[placeholder];
-    return !header || !String(row.values[header] ?? "").trim();
-  }), [batch.mapping, batch.placeholders]);
+
+  const missingForRow = useCallback((row: DataRow) => {
+    const missing: string[] = [];
+    for (const field of batch.fields) {
+      if (field.type === "image") {
+        if (field.required === false) continue;
+        if (field.imageSourceMode === "shared") {
+          const assetId = field.sharedAssetId ?? batch.sharedAssets?.[field.id];
+          if (!assetId || !batch.assets?.[assetId]) {
+            missing.push(field.id);
+          }
+        } else {
+          const assetId = row.assets?.[field.id];
+          if (!assetId || !batch.assets?.[assetId]) {
+            missing.push(field.id);
+          }
+        }
+      } else {
+        const header = batch.mapping[field.id];
+        if (!header || !String(row.values[header] ?? "").trim()) {
+          missing.push(field.id);
+        }
+      }
+    }
+    return missing;
+  }, [batch.fields, batch.mapping, batch.assets, batch.sharedAssets]);
+
   const invalidRowIds = useMemo(() => new Set(rows.filter((row) => row.included && missingForRow(row).length > 0).map((row) => row.id)), [rows, missingForRow]);
   const validRows = useMemo(() => rows.filter((row) => row.included && missingForRow(row).length === 0), [rows, missingForRow]);
   const counts = useMemo(() => ({
@@ -179,16 +316,6 @@ export default function Workbench() {
   const canGenerate = canMap && validRows.length > 0 && !hasUnexcludedInvalid && !generating;
   const includedRows = rows.filter((row) => row.included).length;
   const allDone = includedRows > 0 && counts.completed + counts.failed >= includedRows && !generating;
-
-  const commitBatch = useCallback(async (nextBatch: Batch, nextRows: DataRow[]) => {
-    setBatch(nextBatch);
-    setRows(nextRows);
-    try {
-      await persistBatch(nextBatch, nextRows);
-    } catch (reason) {
-      setError(`Local storage could not save this change. ${reason instanceof Error ? reason.message : "Check available browser storage."}`);
-    }
-  }, []);
 
   const refreshTemplates = useCallback(async () => {
     setTemplates(await db.templates.orderBy("updatedAt").reverse().toArray());
@@ -355,13 +482,161 @@ export default function Workbench() {
     await saveDesign(next, false);
   }, [batch.id, batch.fields, saveDesign, syncDesignHistory]);
 
-  const addPositionedField = useCallback((column: string, page: number) => {
+  const resolveRowAssets = useCallback((row: DataRow): Record<string, Blob> => {
+    const assets: Record<string, Blob> = {};
+    for (const field of batch.fields) {
+      if (field.type === "image") {
+        const assetId = field.imageSourceMode === "shared"
+          ? (field.sharedAssetId ?? batch.sharedAssets?.[field.id])
+          : row.assets?.[field.id];
+        const asset = assetId ? batch.assets?.[assetId] : undefined;
+        if (asset?.blob) {
+          assets[field.id] = asset.blob;
+        }
+      }
+    }
+    return assets;
+  }, [batch.fields, batch.assets, batch.sharedAssets]);
+
+  const uploadSharedAsset = useCallback(async (fieldId: string, file: File) => {
+    setBusy(true);
+    try {
+      const asset = await createDocumentAsset(file);
+      await saveAsset(asset, batch.id);
+      const nextAssets = { ...batch.assets, [asset.id]: asset };
+      const nextSharedAssets = { ...batch.sharedAssets, [fieldId]: asset.id };
+      const nextFields = batch.fields.map((f) => f.id === fieldId ? { ...f, sharedAssetId: asset.id } : f);
+      const nextBatch = {
+        ...batch,
+        assets: nextAssets,
+        sharedAssets: nextSharedAssets,
+        fields: nextFields,
+        updatedAt: Date.now(),
+      };
+      await commitBatch(nextBatch, clearRowOutputs(rows));
+      say(`Shared image “${asset.name}” applied.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload image.");
+    } finally {
+      setBusy(false);
+    }
+  }, [batch, commitBatch, rows, say]);
+
+  const handleBatchImageUpload = useCallback(async (files: File[]) => {
+    setBusy(true);
+    setError("");
+    try {
+      const recordFields = batch.fields.filter((f) => f.type === "image" && f.imageSourceMode === "record");
+      const targetField = recordFields[0];
+      if (!targetField) {
+        throw new Error("Add an image field configured as “One image per record” first.");
+      }
+
+      const newAssets: DocumentAsset[] = [];
+      for (const file of files) {
+        const asset = await createDocumentAsset(file);
+        newAssets.push(asset);
+        await saveAsset(asset, batch.id);
+      }
+
+      const allAssetsMap = { ...batch.assets };
+      for (const a of newAssets) allAssetsMap[a.id] = a;
+
+      const matchingResult = matchAssetsToRows(
+        Object.values(allAssetsMap),
+        rows,
+        targetField.column
+      );
+
+      const updatedRows = rows.map((row) => {
+        const matchedAssetId = matchingResult.matches[row.id];
+        if (matchedAssetId) {
+          return {
+            ...row,
+            assets: { ...row.assets, [targetField.id]: matchedAssetId },
+            status: "pending" as const,
+            pdf: undefined,
+          };
+        }
+        return row;
+      });
+
+      const nextBatch = {
+        ...batch,
+        assets: allAssetsMap,
+        updatedAt: Date.now(),
+      };
+
+      await commitBatch(nextBatch, updatedRows);
+      if (matchingResult.warnings.length) {
+        matchingResult.warnings.forEach((w) => say(w));
+      } else {
+        say(`Matched ${Object.keys(matchingResult.matches).length} of ${rows.length} records with images.`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to process image files.");
+    } finally {
+      setBusy(false);
+    }
+  }, [batch, commitBatch, rows, say]);
+
+  const handleSingleRowImageUpload = useCallback(async (rowId: number, fieldId: string, file: File) => {
+    try {
+      const asset = await createDocumentAsset(file);
+      await saveAsset(asset, batch.id);
+      const allAssets = { ...batch.assets, [asset.id]: asset };
+      const updatedRows = rows.map((row) =>
+        row.id === rowId
+          ? { ...row, assets: { ...row.assets, [fieldId]: asset.id }, status: "pending" as const, pdf: undefined }
+          : row
+      );
+      const nextBatch = { ...batch, assets: allAssets, updatedAt: Date.now() };
+      await commitBatch(nextBatch, updatedRows);
+      say(`Image attached to record ${rowId}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to attach image.");
+    }
+  }, [batch, commitBatch, rows, say]);
+
+  const addPositionedField = useCallback((column: string, page: number, type: FieldType = "text") => {
     const fields = batch.fields ?? [];
     const offset = fields.length % 7;
-    const field: PositionedField = { id: createId(), column, page, x: 0.12, y: Math.min(0.88, 0.14 + offset * 0.075), size: 0.025, color: "#202622", align: "left", fontFamily: "Helvetica", bold: false, italic: false };
+    const field: PositionedField = type === "image" ? {
+      id: createId(),
+      type: "image",
+      name: column || "Signature",
+      column: batch.headers[0] ?? "",
+      page,
+      pageScope: "current",
+      imageSourceMode: "shared",
+      x: 0.12,
+      y: Math.min(0.85, 0.16 + offset * 0.08),
+      width: 0.22,
+      height: 0.1,
+      size: 0.025,
+      color: "#202622",
+      align: "left",
+      fit: "contain",
+      preserveAspectRatio: true,
+      required: true,
+    } : {
+      id: createId(),
+      type: "text",
+      column,
+      page,
+      pageScope: "current",
+      x: 0.12,
+      y: Math.min(0.88, 0.14 + offset * 0.075),
+      size: 0.025,
+      color: "#202622",
+      align: "left",
+      fontFamily: "Helvetica",
+      bold: false,
+      italic: false,
+    };
     void saveDesign([...fields, field]);
     return field.id;
-  }, [batch.fields, saveDesign]);
+  }, [batch.fields, batch.headers, saveDesign]);
 
   const duplicatePositionedField = useCallback((id: string) => {
     const source = (batch.fields ?? []).find((field) => field.id === id);
@@ -438,36 +713,6 @@ export default function Workbench() {
     setPreviewError("");
   }, [batch, rows]);
 
-  const newBatch = useCallback(async () => {
-    setError("");
-    setPreviewUrl("");
-    setPreviewError("");
-    let latestTemplate = await db.templates.orderBy("updatedAt").reverse().first();
-    if (latestTemplate && (!latestTemplate.format || latestTemplate.format === "docx")) {
-      latestTemplate = { ...latestTemplate, blob: await convertDocumentToPdf(latestTemplate.blob, latestTemplate.name, "docx"), format: "pdf" };
-      await db.templates.put(latestTemplate);
-    }
-    const next = freshBatch(latestTemplate?.id ?? null);
-    if (latestTemplate) {
-      next.fields = latestTemplate.fields ?? [];
-      next.placeholders = next.fields.map((field) => field.id);
-      next.mapping = Object.fromEntries(next.fields.map((field) => [field.id, field.column]));
-      next.templateFormat = latestTemplate.format ?? "docx";
-      setTemplateBlob(latestTemplate.blob);
-      setTemplateName(latestTemplate.name);
-      setStep(2);
-    } else {
-      setTemplateBlob(null);
-      setTemplateName("");
-      setStep(1);
-    }
-    await commitBatch(next, []);
-    setDatasetFile(null);
-    setSheetNames([]);
-    setSelectedSheet("");
-    setRecentTemplatePage(false);
-  }, [commitBatch]);
-
   const showPreview = useCallback(async () => {
     if (!templateBlob) return;
     const row = rows.find((item) => item.id === previewRowId) ?? validRows[0];
@@ -478,7 +723,8 @@ export default function Workbench() {
     setEngineMessage("Preparing the printable preview");
     try {
       const values = Object.fromEntries(batch.fields.map((field) => [field.id, getRowValue(row.values, batch.mapping[field.id])]));
-      const pdf = await renderPositionedTemplate(templateBlob, batch.templateFormat ?? "pdf", batch.fields, values);
+      const rowAssets = resolveRowAssets(row);
+      const pdf = await renderPositionedTemplate(templateBlob, batch.templateFormat ?? "pdf", batch.fields, values, rowAssets);
       const url = URL.createObjectURL(pdf);
       setPreviewUrl((previous) => { if (previous) URL.revokeObjectURL(previous); return url; });
       setPreviewRowId(row.id);
@@ -488,7 +734,7 @@ export default function Workbench() {
       setPreviewLoading(false);
       setEngineMessage("");
     }
-  }, [batch, previewRowId, rows, templateBlob, validRows]);
+  }, [batch, previewRowId, resolveRowAssets, rows, templateBlob, validRows]);
 
   const generateBatch = useCallback(async (retryOnly = false) => {
     if (!templateBlob) return;
@@ -510,8 +756,9 @@ export default function Workbench() {
       await db.rows.put({ ...processing, batchId: batch.id });
       try {
         const values = Object.fromEntries(batch.fields.map((field) => [field.id, getRowValue(row.values, batch.mapping[field.id])]));
+        const rowAssets = resolveRowAssets(row);
         setEngineMessage(`Rendering record ${completedNow + 1} of ${work.length}`);
-        const pdf = await renderPositionedTemplate(templateBlob, batch.templateFormat ?? "pdf", batch.fields, values);
+        const pdf = await renderPositionedTemplate(templateBlob, batch.templateFormat ?? "pdf", batch.fields, values, rowAssets);
         const done: DataRow = { ...processing, status: "completed", pdf };
         await db.rows.put({ ...done, batchId: batch.id });
         setRows((current) => current.map((item) => item.id === row.id ? done : item));
@@ -541,7 +788,7 @@ export default function Workbench() {
     if (cancelled) say("Generation paused. Completed files are saved and pending rows can resume.");
     else if (failedCount) say(`${successCount} generated; ${failedCount} failed. You can retry failed rows.`);
     else say(`${successCount} personalized documents are ready.`);
-  }, [batch, missingForRow, rows, say, templateBlob]);
+  }, [batch, missingForRow, resolveRowAssets, rows, say, templateBlob]);
 
   const requestCancel = useCallback(() => {
     cancelRef.current = true;
@@ -557,13 +804,14 @@ export default function Workbench() {
       const blob = await createPdfZip(completed, (row) => artifactBase(row, batch), `EasyDocs batch export\nTemplate: ${templateName}\nSpreadsheet: ${batch.datasetName ?? ""}\nGenerated PDFs: ${completed.length}\nFailed: ${counts.failed}\nExcluded: ${counts.excluded}\n\nPrintable files are in PDF/.\n`, setExportProgress);
       saveFile(blob, `easydocs_${batch.id.slice(0, 8)}.zip`);
       say("ZIP export downloaded.");
+      void triggerDownloadCleanup();
     } catch (reason) {
       setError(`Could not create the ZIP: ${reason instanceof Error ? reason.message : "Browser storage limit reached."}`);
     } finally {
       setBusy(false);
       setExportProgress(null);
     }
-  }, [batch, counts.excluded, counts.failed, rows, say, templateName]);
+  }, [batch, counts.excluded, counts.failed, rows, say, templateName, triggerDownloadCleanup]);
 
   const downloadCombinedPdf = useCallback(async () => {
     const completed = rows.filter((row) => row.status === "completed" && row.pdf).sort((a, b) => a.id - b.id);
@@ -574,18 +822,22 @@ export default function Workbench() {
       const blob = await createCombinedPdf(completed, (percent) => setExportProgress(percent));
       saveFile(blob, `easydocs_print_${batch.id.slice(0, 8)}.pdf`);
       say(`${completed.length} documents combined in spreadsheet order.`);
+      void triggerDownloadCleanup();
     } catch (reason) {
       setError(`Could not create the combined PDF: ${reason instanceof Error ? reason.message : "The file is too large for available browser memory."}`);
     } finally {
       setBusy(false);
       setExportProgress(null);
     }
-  }, [batch.id, rows, say]);
+  }, [batch.id, rows, say, triggerDownloadCleanup]);
 
   const downloadSingle = useCallback((row: DataRow, format: "docx" | "pdf") => {
     const blob = row[format];
-    if (blob) saveFile(blob, `${artifactBase(row, batch)}.${format}`);
-  }, [batch]);
+    if (blob) {
+      saveFile(blob, `${artifactBase(row, batch)}.${format}`);
+      void triggerDownloadCleanup();
+    }
+  }, [batch, triggerDownloadCleanup]);
 
   const startOver = useCallback(async () => {
     if (!window.confirm("Delete this batch and its generated files? Saved templates used by other batches will stay on this device.")) return;
@@ -626,6 +878,17 @@ export default function Workbench() {
 
   const pageTitle = recentTemplatePage ? "Your template library" : STEPS[step - 1].title;
   const reviewColumns = [...new Set([...batch.headers.slice(0, 4), ...batch.fields.map((field) => batch.mapping[field.id]).filter((value): value is string => Boolean(value))])];
+  const recordImageFields = useMemo(() => batch.fields.filter((field) => field.type === "image" && field.imageSourceMode === "record"), [batch.fields]);
+  const sampleDataUrls = useMemo(() => {
+    const row = rows.find((r) => r.included) ?? rows[0];
+    if (!row?.assets || !batch.assets) return {};
+    const urls: Record<string, string> = {};
+    for (const [fieldId, assetId] of Object.entries(row.assets)) {
+      const asset = batch.assets[assetId];
+      if (asset?.dataUrl) urls[fieldId] = asset.dataUrl;
+    }
+    return urls;
+  }, [rows, batch.assets]);
   const continueTo = () => {
     if (step === 1 && hasTemplate) setStep(2);
     else if (step === 2 && rows.length) setStep(hasTemplate ? 3 : 1);
@@ -717,7 +980,29 @@ export default function Workbench() {
               <div className="card-head"><div><div className="step-kicker">STEP 03 · PLACE FIELDS</div><h2>Put each value where it belongs</h2><p>Add a spreadsheet column, then position and style it on the document preview.</p></div><span className="format-badge"><Sparkles size={13} /> {batch.fields.length} fields</span></div>
               <div className="card-body">
                 {!hasTemplate && <div className="notice error"><CircleAlert size={15} /><span>Choose a document template before placing spreadsheet fields.</span></div>}
-                {templateBlob && (batch.templateFormat === "image" || batch.templateFormat === "pdf") && <TemplateDesigner template={templateBlob} format={batch.templateFormat} headers={batch.headers} fields={batch.fields} sample={Object.fromEntries(batch.fields.map((field) => [field.id, getRowValue((rows.find((row) => row.included) ?? rows[0])?.values ?? {}, batch.mapping[field.id])]))} onAdd={addPositionedField} onUpdate={updatePositionedField} onRemove={removePositionedField} onDuplicate={duplicatePositionedField} onUndo={undoDesign} onRedo={redoDesign} canUndo={designCanUndo} canRedo={designCanRedo} onContinue={continueTo} onBack={() => setStep(2)} canContinue={canMap} />}
+                {templateBlob && (batch.templateFormat === "image" || batch.templateFormat === "pdf") && (
+                  <TemplateDesigner
+                    template={templateBlob}
+                    format={batch.templateFormat}
+                    headers={batch.headers}
+                    fields={batch.fields}
+                    sample={Object.fromEntries(batch.fields.map((field) => [field.id, getRowValue((rows.find((row) => row.included) ?? rows[0])?.values ?? {}, batch.mapping[field.id])]))}
+                    sampleAssets={sampleDataUrls}
+                    assets={batch.assets}
+                    onUploadSharedAsset={uploadSharedAsset}
+                    onAdd={addPositionedField}
+                    onUpdate={updatePositionedField}
+                    onRemove={removePositionedField}
+                    onDuplicate={duplicatePositionedField}
+                    onUndo={undoDesign}
+                    onRedo={redoDesign}
+                    canUndo={designCanUndo}
+                    canRedo={designCanRedo}
+                    onContinue={continueTo}
+                    onBack={() => setStep(2)}
+                    canContinue={canMap}
+                  />
+                )}
                 {batch.datasetWarnings.map((warning) => <div className="notice warn" key={warning} style={{ marginTop: 10 }}><CircleAlert size={14} /><span>{warning}</span></div>)}
                 {!batch.fields.length && <div className="notice info" style={{ marginTop: 14 }}><CircleAlert size={14} /><span>Add a field from the left panel. You can edit its position, font, size, and color.</span></div>}
                 <div className="step-footer"><button className="button secondary" onClick={() => setStep(2)}><ArrowLeft size={14} /> Back to data</button><button className="button" disabled={!canMap} onClick={continueTo}>Review records <ArrowRight size={14} /></button></div>
@@ -729,6 +1014,35 @@ export default function Workbench() {
               <div className="card-body">
                 <div className="validation-summary"><Stat label="Records" value={counts.total} /><Stat label="Ready" value={counts.valid} color="#287d48" /><Stat label="Need attention" value={invalidRowIds.size} color={invalidRowIds.size ? "#a25243" : undefined} /><Stat label="Excluded" value={counts.excluded} /></div>
                 {hasUnexcludedInvalid && <div className="notice warn"><CircleAlert size={14} /><span>{invalidRowIds.size} included record{invalidRowIds.size === 1 ? " is" : "s are"} missing required values. Correct the cells or exclude those rows to continue.</span></div>}
+                {recordImageFields.length > 0 && (
+                  <div style={{ marginTop: 14, marginBottom: 14, padding: "14px 18px", border: "1px solid #e5e5ea", borderRadius: 8, background: "#fafafa" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                      <div>
+                        <strong style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14 }}>
+                          <ImageIcon size={15} /> Recipient images &amp; signatures
+                        </strong>
+                        <p className="subtle" style={{ margin: "3px 0 0 0", fontSize: 13 }}>
+                          Upload individual images or signatures for {recordImageFields.map((f) => f.name || f.column).join(", ")}. Files match by filename (e.g. <code>rahul.png</code>) or record ID.
+                        </p>
+                      </div>
+                      <button className="button secondary small" disabled={busy} onClick={() => batchImageInput.current?.click()}>
+                        <Upload size={13} /> Upload recipient images
+                      </button>
+                      <input
+                        ref={batchImageInput}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/jpg"
+                        multiple
+                        hidden
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files ?? []);
+                          if (files.length) void handleBatchImageUpload(files);
+                          e.target.value = "";
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
                 {validRows.length > 0 && <div className="review-layout">
                   <div>
                     <div className="data-toolbar"><span className="step-kicker">PRINT PREVIEW</span><div className="record-selector"><select aria-label="Select preview record" className="select" value={previewRowId ?? ""} onChange={(event) => { setPreviewRowId(Number(event.target.value)); setPreviewUrl(""); setPreviewError(""); }}><option value="">Choose a record</option>{validRows.slice(0, 1000).map((row) => <option key={row.id} value={row.id}>Row {row.id} — {artifactBase(row, batch).split("_")[0]}</option>)}</select></div></div>
@@ -737,10 +1051,61 @@ export default function Workbench() {
                   </div>
                   <aside className="review-side"><div className="review-box"><h3>Ready to create</h3><div className="review-row"><span>Template</span><strong title={templateName}>{templateName}</strong></div><div className="review-row"><span>Spreadsheet</span><strong>{batch.datasetName}</strong></div><div className="review-row"><span>Printable PDFs</span><strong>{validRows.length}</strong></div><div className="review-row"><span>Placed fields</span><strong>{batch.fields.length}</strong></div><div className="review-row"><span>Output</span><strong>PDF</strong></div></div><div className="notice info"><ShieldCheck size={14} /><span>Review the sample PDF and correct any missing values below before creating the batch.</span></div></aside>
                 </div>}
-                {rows.length > 0 && <><div className="section-label">Record checks <span className="subtle">· correct a value or exclude that record</span></div><div className="table-scroll"><table className="data-table"><thead><tr><th>Include</th><th>Record</th>{reviewColumns.map((header, index) => <th key={`${header}-${index}`}>{header}</th>)}<th>Status</th></tr></thead><tbody>
+                {rows.length > 0 && <><div className="section-label">Record checks <span className="subtle">· correct a value or exclude that record</span></div><div className="table-scroll"><table className="data-table"><thead><tr><th>Include</th><th>Record</th>{reviewColumns.map((header, index) => <th key={`${header}-${index}`}>{header}</th>)}{recordImageFields.map((field) => <th key={field.id}>{field.name || field.column || "Image"}</th>)}<th>Status</th></tr></thead><tbody>
                   {(showAllRows ? rows : rows.slice(0, 10)).map((row) => {
                     const missing = missingForRow(row);
-                    return <tr key={row.id} className={!row.included ? "row-exclude" : ""}><td><input aria-label={`Include row ${row.id}`} className="checkbox" type="checkbox" checked={row.included} onChange={() => void toggleRow(row.id)} disabled={generating} /></td><td>{row.id}</td>{reviewColumns.map((header, index) => { const needsValue = missing.some((field) => batch.mapping[field] === header); return <td key={`${header}-${index}`} title={row.values[header]}>{needsValue && row.included ? <input className="text-input cell-input" aria-label={`Correct ${header} for row ${row.id}`} placeholder="Enter value" value={row.values[header] ?? ""} onChange={(event) => updateRowValue(row.id, header, event.target.value)} disabled={generating} /> : row.values[header] || "—"}</td>; })}<td>{!row.included ? "Excluded" : missing.length ? <span className="validation-error">Missing: {missing.map((id) => batch.mapping[id] ?? id).join(", ")}</span> : <span className="validation-ok">Ready</span>}</td></tr>;
+                    return (
+                      <tr key={row.id} className={!row.included ? "row-exclude" : ""}>
+                        <td><input aria-label={`Include row ${row.id}`} className="checkbox" type="checkbox" checked={row.included} onChange={() => void toggleRow(row.id)} disabled={generating} /></td>
+                        <td>{row.id}</td>
+                        {reviewColumns.map((header, index) => {
+                          const needsValue = missing.some((field) => batch.mapping[field] === header);
+                          return <td key={`${header}-${index}`} title={row.values[header]}>{needsValue && row.included ? <input className="text-input cell-input" aria-label={`Correct ${header} for row ${row.id}`} placeholder="Enter value" value={row.values[header] ?? ""} onChange={(event) => updateRowValue(row.id, header, event.target.value)} disabled={generating} /> : row.values[header] || "—"}</td>;
+                        })}
+                        {recordImageFields.map((field) => {
+                          const assetId = row.assets?.[field.id];
+                          const asset = assetId ? batch.assets?.[assetId] : undefined;
+                          return (
+                            <td key={field.id} style={{ minWidth: 120 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                {asset?.dataUrl ? (
+                                  <img src={asset.dataUrl} alt={asset.name} style={{ width: 28, height: 28, objectFit: "contain", border: "1px solid #ddd", borderRadius: 4, background: "#fff" }} />
+                                ) : (
+                                  <span style={{ fontSize: 11, color: "#8e8e93", fontStyle: "italic" }}>None</span>
+                                )}
+                                <label className="small-link" style={{ cursor: "pointer", fontSize: 11 }}>
+                                  {asset ? "Change" : "Upload"}
+                                  <input
+                                    type="file"
+                                    accept="image/png,image/jpeg,image/webp,image/jpg"
+                                    hidden
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) void handleSingleRowImageUpload(row.id, field.id, file);
+                                      e.target.value = "";
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                            </td>
+                          );
+                        })}
+                        <td>
+                          {!row.included ? (
+                            "Excluded"
+                          ) : missing.length ? (
+                            <span className="validation-error">
+                              Missing: {missing.map((id) => {
+                                const f = batch.fields.find((field) => field.id === id);
+                                return f?.name || f?.column || batch.mapping[id] || id;
+                              }).join(", ")}
+                            </span>
+                          ) : (
+                            <span className="validation-ok">Ready</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
                   })}
                 </tbody></table></div>{rows.length > 10 && <button className="small-link" style={{ marginTop: 10 }} onClick={() => setShowAllRows((value) => !value)}>{showAllRows ? "Show fewer records" : `Show all ${rows.length} records`}</button>}</>}
                 <div className="step-footer"><button className="button secondary" onClick={() => setStep(3)}><ArrowLeft size={14} /> Back to field placement</button><button className="button" disabled={!canMap || hasUnexcludedInvalid || validRows.length === 0} onClick={() => setStep(5)}>Continue to generation <ArrowRight size={14} /></button></div>
@@ -750,6 +1115,27 @@ export default function Workbench() {
             {step === 5 && <section className="card">
               <div className="card-head"><div><div className="step-kicker">STEP 05 · GENERATE</div><h2>{allDone ? "Your batch is ready" : generating ? "Creating your documents" : "Generate personalized PDFs"}</h2><p>{allDone ? "Download individual files, a ZIP archive, or one combined print PDF." : "Your reviewed records will become individual PDFs, one document per record."}</p></div><span className="format-badge"><FileCheck2 size={13} /> {counts.valid} eligible</span></div>
               <div className="card-body">
+                {cleanupCountdown !== null && (
+                  <div className="notice warn" style={{ marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <Clock size={16} />
+                      <span>
+                        Download started. For your privacy, temporary document data will be cleared in{" "}
+                        <strong>
+                          {Math.floor(cleanupCountdown / 60)}:{String(cleanupCountdown % 60).padStart(2, "0")}
+                        </strong>.
+                      </span>
+                    </div>
+                    <div className="button-row" style={{ margin: 0, gap: 6 }}>
+                      <button className="button danger small" onClick={() => void executeSessionCleanup()}>
+                        <Trash2 size={13} /> Clean now
+                      </button>
+                      <button className="button secondary small" onClick={() => void cancelCleanup()}>
+                        Keep session
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {!allDone && <div className="generation-summary"><div><span>Template</span><strong title={templateName}>{templateName || "Not selected"}</strong></div><div><span>Spreadsheet</span><strong title={batch.datasetName ?? ""}>{batch.datasetName || "Not selected"}</strong></div><div><span>Records to generate</span><strong>{validRows.length}</strong></div><div><span>Output format</span><strong>Printable PDF</strong></div></div>}
                 {!allDone && !generating && <div className="notice info" style={{ marginTop: 15 }}><LockKeyhole size={14} /><span>Generation runs in this browser. Completed PDFs are saved with your batch and remain available if some records fail.</span></div>}
                 {counts.valid === 0 && <div className="notice warn"><CircleAlert size={14} /><span>No eligible records are ready. Return to review and resolve the row issues.</span></div>}

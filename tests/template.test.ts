@@ -98,4 +98,121 @@ describe("printable PDF rendering", () => {
     await expect(renderPositionedTemplate(template, "pdf", [field], { name: "Line one\nLine two" })).rejects.toThrow("currently places one line per field");
     await expect(renderPositionedTemplate(template, "pdf", [{ ...field, x: 0.95 },], { name: "A very long student name" })).rejects.toThrow("extends beyond the page");
   });
+
+  it("repeats fields on all pages when pageScope is 'all'", async () => {
+    const source = await PDFDocument.create();
+    source.addPage([400, 600]);
+    source.addPage([400, 600]);
+    source.addPage([400, 600]);
+    const template = new Blob([new Uint8Array(await source.save()).buffer as ArrayBuffer], { type: "application/pdf" });
+    const field: PositionedField = {
+      id: "watermark",
+      column: "Watermark",
+      page: 0,
+      pageScope: "all",
+      x: 0.3,
+      y: 0.1,
+      size: 0.04,
+      color: "#202622",
+      align: "left",
+      fontFamily: "Helvetica",
+    };
+    const output = await renderPositionedTemplate(template, "pdf", [field], { watermark: "CONFIDENTIAL" });
+    const pdf = await PDFDocument.load(await output.arrayBuffer());
+    expect(pdf.getPageCount()).toBe(3);
+    expect(pdf.getPage(0).node.Contents()).toBeDefined();
+    expect(pdf.getPage(1).node.Contents()).toBeDefined();
+    expect(pdf.getPage(2).node.Contents()).toBeDefined();
+  });
+
+  it("renders fields only on selected pages when pageScope is 'selected'", async () => {
+    const source = await PDFDocument.create();
+    source.addPage([400, 600]);
+    source.addPage([400, 600]);
+    source.addPage([400, 600]);
+    const template = new Blob([new Uint8Array(await source.save()).buffer as ArrayBuffer], { type: "application/pdf" });
+    const field: PositionedField = {
+      id: "footer",
+      column: "Footer",
+      page: 0,
+      pageScope: "selected",
+      targetPages: [0, 2],
+      x: 0.3,
+      y: 0.9,
+      size: 0.03,
+      color: "#202622",
+      align: "left",
+      fontFamily: "Helvetica",
+    };
+    const output = await renderPositionedTemplate(template, "pdf", [field], { footer: "Page Notice" });
+    const pdf = await PDFDocument.load(await output.arrayBuffer());
+    expect(pdf.getPageCount()).toBe(3);
+    expect(pdf.getPage(0).node.Contents()).toBeDefined();
+    expect(pdf.getPage(1).node.Contents()).toBeUndefined();
+    expect(pdf.getPage(2).node.Contents()).toBeDefined();
+  });
+
+  it("renders dynamic image fields across pages with fit options", async () => {
+    const source = await PDFDocument.create();
+    source.addPage([500, 700]);
+    source.addPage([500, 700]);
+    const template = new Blob([new Uint8Array(await source.save()).buffer as ArrayBuffer], { type: "application/pdf" });
+
+    const onePixelPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/gAAAAABJRU5ErkJggg==", "base64");
+    const imageBlob = new Blob([onePixelPng], { type: "image/png" });
+
+    const field: PositionedField = {
+      id: "sig",
+      type: "image",
+      name: "Signature",
+      column: "Signature",
+      page: 0,
+      pageScope: "all",
+      x: 0.6,
+      y: 0.8,
+      width: 0.25,
+      height: 0.1,
+      fit: "contain",
+      preserveAspectRatio: true,
+      color: "#000",
+      size: 0.02,
+      align: "left",
+    };
+
+    const output = await renderPositionedTemplate(template, "pdf", [field], {}, { sig: imageBlob });
+    const pdf = await PDFDocument.load(await output.arrayBuffer());
+    expect(pdf.getPageCount()).toBe(2);
+    expect(pdf.getPage(0).node.Contents()).toBeDefined();
+    expect(pdf.getPage(1).node.Contents()).toBeDefined();
+  });
+
+  it("enforces required image fields and allows optional missing image fields", async () => {
+    const source = await PDFDocument.create();
+    source.addPage([400, 400]);
+    const template = new Blob([new Uint8Array(await source.save()).buffer as ArrayBuffer], { type: "application/pdf" });
+
+    const requiredField: PositionedField = {
+      id: "photo",
+      type: "image",
+      name: "Profile Photo",
+      column: "Photo",
+      page: 0,
+      pageScope: "current",
+      x: 0.1,
+      y: 0.1,
+      width: 0.2,
+      height: 0.2,
+      required: true,
+      color: "#000",
+      size: 0.02,
+      align: "left",
+    };
+
+    await expect(renderPositionedTemplate(template, "pdf", [requiredField], {}, {})).rejects.toThrow("Missing required image");
+
+    const optionalField: PositionedField = { ...requiredField, required: false };
+    const output = await renderPositionedTemplate(template, "pdf", [optionalField], {}, {});
+    const pdf = await PDFDocument.load(await output.arrayBuffer());
+    expect(pdf.getPageCount()).toBe(1);
+  });
 });

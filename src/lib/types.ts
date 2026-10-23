@@ -2,6 +2,22 @@ export type RowStatus = "pending" | "processing" | "completed" | "failed" | "exc
 export type BatchStatus = "draft" | "generating" | "complete" | "partial" | "failed";
 export type TemplateFormat = "image" | "pdf" | "docx";
 
+export type FieldType = "text" | "image";
+export type PageScope = "current" | "all" | "selected";
+export type ImageSourceMode = "shared" | "record";
+export type ImageFit = "contain" | "cover" | "fill";
+
+export interface DocumentAsset {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  blob: Blob;
+  dataUrl?: string;
+  width?: number;
+  height?: number;
+}
+
 export interface PositionedField {
   id: string;
   column: string;
@@ -15,6 +31,17 @@ export interface PositionedField {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
+  type?: FieldType;
+  name?: string;
+  pageScope?: PageScope;
+  targetPages?: number[];
+  imageSourceMode?: ImageSourceMode;
+  sharedAssetId?: string;
+  width?: number;
+  height?: number;
+  fit?: ImageFit;
+  preserveAspectRatio?: boolean;
+  required?: boolean;
 }
 
 export interface DataRow {
@@ -25,6 +52,7 @@ export interface DataRow {
   error?: string;
   docx?: Blob;
   pdf?: Blob;
+  assets?: Record<string, string>;
 }
 
 export interface Dataset {
@@ -65,6 +93,9 @@ export interface Batch {
   unsupportedTokens: string[];
   datasetWarnings: string[];
   rowCount: number;
+  assets?: Record<string, DocumentAsset>;
+  sharedAssets?: Record<string, string>;
+  cleanupExpiresAt?: number;
 }
 
 export interface BatchCounts {

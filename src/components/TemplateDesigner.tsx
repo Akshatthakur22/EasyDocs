@@ -1,9 +1,10 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Maximize2, Minimize2, Redo2, Undo2 } from "lucide-react";
-import type { PositionedField, TemplateFormat } from "@/lib/types";
+import { Image as ImageIcon, Maximize2, Minimize2, Redo2, Undo2, Upload } from "lucide-react";
+import type { DocumentAsset, FieldType, ImageFit, ImageSourceMode, PageScope, PositionedField, TemplateFormat } from "@/lib/types";
 
 interface Props {
   template: Blob;
@@ -11,7 +12,9 @@ interface Props {
   headers: string[];
   fields: PositionedField[];
   sample: Record<string, string>;
-  onAdd: (column: string, page: number) => string;
+  sampleAssets?: Record<string, string>;
+  assets?: Record<string, DocumentAsset>;
+  onAdd: (column: string, page: number, type?: FieldType) => string;
   onUpdate: (id: string, update: Partial<PositionedField>) => void;
   onRemove: (id: string) => void;
   onDuplicate: (id: string) => string | undefined;
@@ -22,11 +25,21 @@ interface Props {
   onContinue: () => void;
   onBack: () => void;
   canContinue: boolean;
+  onUploadSharedAsset?: (fieldId: string, file: File) => Promise<void>;
 }
 
 type PageSize = { width: number; height: number };
 type Point = { x: number; y: number };
 type CancellableRender = { cancel: () => void; promise: Promise<void> };
+type ResizeHandle = "nw" | "ne" | "se" | "sw" | "n" | "s" | "e" | "w";
+interface ResizeState {
+  id: string;
+  handle: ResizeHandle;
+  startPoint: Point;
+  initial: { x: number; y: number; width: number; height: number };
+  preserveAspectRatio: boolean;
+  aspectRatio: number;
+}
 
 const FONT_FAMILIES: Array<{ value: NonNullable<PositionedField["fontFamily"]>; label: string }> = [
   { value: "Helvetica", label: "Helvetica" },
@@ -36,7 +49,27 @@ const FONT_FAMILIES: Array<{ value: NonNullable<PositionedField["fontFamily"]>; 
 const inputStyle: React.CSSProperties = { display: "block", width: "100%", marginTop: 5, minHeight: 34, padding: "6px 8px", border: "1px solid #e5e5ea", borderRadius: 7, background: "#fff", color: "#1d1d1f", font: "inherit" };
 const toolButtonStyle: React.CSSProperties = { minHeight: 30, padding: "4px 8px", border: "1px solid #e5e5ea", borderRadius: 7, background: "#fff", cursor: "pointer", color: "#1d1d1f" };
 
-export default function TemplateDesigner({ template, format, headers, fields, sample, onAdd, onUpdate, onRemove, onDuplicate, onUndo, onRedo, canUndo, canRedo, onContinue, onBack, canContinue }: Props) {
+export default function TemplateDesigner({
+  template,
+  format,
+  headers,
+  fields,
+  sample,
+  sampleAssets,
+  assets,
+  onAdd,
+  onUpdate,
+  onRemove,
+  onDuplicate,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  onContinue,
+  onBack,
+  canContinue,
+  onUploadSharedAsset,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pageSurfaceRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -49,6 +82,8 @@ export default function TemplateDesigner({ template, format, headers, fields, sa
   const [canvasWidth, setCanvasWidth] = useState(680);
   const [selected, setSelected] = useState<string | null>(null);
   const [draftPositions, setDraftPositions] = useState<Record<string, Point>>({});
+  const resizeRef = useRef<ResizeState | null>(null);
+  const [draftSizes, setDraftSizes] = useState<Record<string, { width: number; height: number; x?: number; y?: number }>>({});
   const [zoom, setZoom] = useState(100);
   const initialFitDoneRef = useRef(false);
   const [snap, setSnap] = useState(false);
@@ -56,7 +91,12 @@ export default function TemplateDesigner({ template, format, headers, fields, sa
   const [panActive, setPanActive] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(800);
   const activeField = useMemo(() => fields.find((field) => field.id === selected), [fields, selected]);
-  const currentFields = fields.filter((field) => field.page === page);
+  const currentFields = fields.filter((field) => {
+    const scope = field.pageScope ?? "current";
+    if (scope === "all") return true;
+    if (scope === "selected") return (field.targetPages ?? [field.page]).includes(page);
+    return field.page === page;
+  });
   const units = format === "pdf" ? "pt" : "px";
 
   useEffect(() => {
@@ -170,6 +210,31 @@ export default function TemplateDesigner({ template, format, headers, fields, sa
       setSelected(null);
       return;
     }
+    if (activeField?.type === "image" && event.shiftKey) {
+      const currentW = activeField.width ?? 0.2;
+      const currentH = activeField.height ?? 0.1;
+      const stepSize = event.altKey ? 0.005 : 0.02;
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        onUpdate(activeField.id, { width: clamp(currentW + stepSize, 0.02, 1) });
+        return;
+      }
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        onUpdate(activeField.id, { width: clamp(currentW - stepSize, 0.02, 1) });
+        return;
+      }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        onUpdate(activeField.id, { height: clamp(currentH + stepSize, 0.02, 1) });
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        onUpdate(activeField.id, { height: clamp(currentH - stepSize, 0.02, 1) });
+        return;
+      }
+    }
     const steps: Record<string, Point> = { ArrowLeft: { x: -1, y: 0 }, ArrowRight: { x: 1, y: 0 }, ArrowUp: { x: 0, y: -1 }, ArrowDown: { x: 0, y: 1 } };
     const step = steps[event.key];
     if (!step || !activeField) return;
@@ -178,7 +243,7 @@ export default function TemplateDesigner({ template, format, headers, fields, sa
     moveSelected(step.x * multiplier, step.y * multiplier);
   };
 
-  const startDrag = (event: React.PointerEvent<HTMLButtonElement>, field: PositionedField) => {
+  const startDrag = (event: React.PointerEvent<HTMLElement>, field: PositionedField) => {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -189,14 +254,14 @@ export default function TemplateDesigner({ template, format, headers, fields, sa
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const dragTo = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const dragTo = (event: React.PointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     if (!drag || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
     const point = pointAt(event.clientX, event.clientY);
     setDraftPositions((current) => ({ ...current, [drag.id]: { x: clamp(point.x - drag.offset.x), y: clamp(point.y - drag.offset.y) } }));
   };
 
-  const finishDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const finishDrag = (event: React.PointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     if (drag) {
       const point = pointAt(event.clientX, event.clientY);
@@ -206,6 +271,103 @@ export default function TemplateDesigner({ template, format, headers, fields, sa
       dragRef.current = null;
     }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  const startResize = (event: React.PointerEvent<HTMLElement>, field: PositionedField, handle: ResizeHandle) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const pointer = pointAt(event.clientX, event.clientY);
+    const w = field.width ?? 0.2;
+    const h = field.height ?? 0.1;
+    const ratio = (w * pageSize.width) / Math.max(1, h * pageSize.height);
+    resizeRef.current = {
+      id: field.id,
+      handle,
+      startPoint: pointer,
+      initial: { x: field.x, y: field.y, width: w, height: h },
+      preserveAspectRatio: Boolean(field.preserveAspectRatio),
+      aspectRatio: ratio > 0 ? ratio : 1,
+    };
+    setSelected(field.id);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const resizeTo = (event: React.PointerEvent<HTMLElement>) => {
+    const resize = resizeRef.current;
+    if (!resize || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const current = pointAt(event.clientX, event.clientY);
+    const dx = current.x - resize.startPoint.x;
+    const dy = current.y - resize.startPoint.y;
+
+    let newX = resize.initial.x;
+    let newY = resize.initial.y;
+    let newW = resize.initial.width;
+    let newH = resize.initial.height;
+
+    if (resize.handle.includes("e")) {
+      newW = Math.max(0.03, resize.initial.width + dx);
+    }
+    if (resize.handle.includes("s")) {
+      newH = Math.max(0.02, resize.initial.height + dy);
+    }
+    if (resize.handle.includes("w")) {
+      const maxDx = resize.initial.width - 0.03;
+      const clampedDx = Math.min(maxDx, dx);
+      newX = resize.initial.x + clampedDx;
+      newW = resize.initial.width - clampedDx;
+    }
+    if (resize.handle.includes("n")) {
+      const maxDy = resize.initial.height - 0.02;
+      const clampedDy = Math.min(maxDy, dy);
+      newY = resize.initial.y + clampedDy;
+      newH = resize.initial.height - clampedDy;
+    }
+
+    if (resize.preserveAspectRatio && (resize.handle === "se" || resize.handle === "sw" || resize.handle === "ne" || resize.handle === "nw")) {
+      const pageRatio = pageSize.width / pageSize.height;
+      const targetH = (newW * pageRatio) / resize.aspectRatio;
+      if (resize.handle.includes("n")) {
+        newY = resize.initial.y + (resize.initial.height - targetH);
+      }
+      newH = Math.max(0.02, targetH);
+    }
+
+    setDraftSizes((prev) => ({
+      ...prev,
+      [resize.id]: {
+        x: clamp(newX, 0, 0.98),
+        y: clamp(newY, 0, 0.98),
+        width: clamp(newW, 0.03, 1),
+        height: clamp(newH, 0.02, 1),
+      },
+    }));
+  };
+
+  const finishResize = (event: React.PointerEvent<HTMLElement>) => {
+    const resize = resizeRef.current;
+    if (resize) {
+      const draft = draftSizes[resize.id];
+      if (draft) {
+        onUpdate(resize.id, {
+          ...(draft.x !== undefined ? { x: draft.x } : {}),
+          ...(draft.y !== undefined ? { y: draft.y } : {}),
+          width: draft.width,
+          height: draft.height,
+        });
+        setDraftSizes((prev) => {
+          const next = { ...prev };
+          delete next[resize.id];
+          return next;
+        });
+      }
+      resizeRef.current = null;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   };
 
   const setCoordinate = (axis: "x" | "y", value: string) => {
@@ -291,11 +453,22 @@ export default function TemplateDesigner({ template, format, headers, fields, sa
   }, [expanded, fitPage]);
 
   return (
-    <section className={`template-designer${expanded ? " template-designer-expanded" : ""}`} onKeyDown={handleKeys} style={{ position: expanded ? "fixed" : "relative", inset: expanded ? 12 : undefined, zIndex: expanded ? 1000 : undefined, display: "grid", gridTemplateColumns: "minmax(150px, 200px) minmax(0, 1fr) minmax(190px, 245px)", gridTemplateRows: expanded ? "minmax(0, 1fr) auto" : "minmax(0, 1fr)", minHeight: 0, height: expanded ? "calc(100dvh - 24px)" : "100%", border: "1px solid #e5e5ea", borderRadius: 16, overflow: "hidden", background: "#f5f5f7", boxShadow: expanded ? "0 20px 80px #1d1d1f40" : undefined }}>
+    <section className={`template-designer${expanded ? " template-designer-expanded" : ""}`} onKeyDown={handleKeys} style={{ position: expanded ? "fixed" : "relative", inset: expanded ? 12 : undefined, zIndex: expanded ? 1000 : undefined, display: "grid", gridTemplateColumns: "minmax(160px, 220px) minmax(0, 1fr) minmax(210px, 270px)", gridTemplateRows: expanded ? "minmax(0, 1fr) auto" : "minmax(0, 1fr)", minHeight: 0, height: expanded ? "calc(100dvh - 24px)" : "100%", border: "1px solid #e5e5ea", borderRadius: 16, overflow: "hidden", background: "#f5f5f7", boxShadow: expanded ? "0 20px 80px #1d1d1f40" : undefined }}>
       <aside style={{ background: "#fff", borderRight: "1px solid #e5e5ea", padding: 14, overflowY: "auto" }}>
-        <strong style={{ fontSize: 13 }}>Spreadsheet fields</strong>
-        <p style={{ fontSize: 11, color: "#6e6e73", margin: "6px 0 12px" }}>Click a column to add it. Then drag its value on the page.</p>
-        {headers.map((header) => <button key={header} onClick={() => setSelected(onAdd(header, page))} style={{ display: "block", width: "100%", textAlign: "left", margin: "7px 0", padding: "9px 10px", borderRadius: 9, border: "1px solid #e5e5ea", background: "#fff", cursor: "pointer", fontSize: 12 }}>{header}<span style={{ float: "right", color: "#007aff" }}>＋</span></button>)}
+        <strong style={{ fontSize: 13 }}>Place document fields</strong>
+        <p style={{ fontSize: 11, color: "#6e6e73", margin: "6px 0 12px" }}>Add text or image fields, then position them on the page.</p>
+
+        <button
+          type="button"
+          onClick={() => setSelected(onAdd("Signature", page, "image"))}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", margin: "8px 0 14px", padding: "9px 11px", borderRadius: 9, border: "1px solid #007aff", background: "#eaf3ff", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#0067dc" }}
+        >
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}><ImageIcon size={15} /> Add image / signature</span>
+          <span>＋</span>
+        </button>
+
+        <strong style={{ fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#8e8e93", display: "block", marginTop: 10, marginBottom: 6 }}>Spreadsheet text columns</strong>
+        {headers.map((header) => <button key={header} onClick={() => setSelected(onAdd(header, page, "text"))} style={{ display: "block", width: "100%", textAlign: "left", margin: "6px 0", padding: "8px 9px", borderRadius: 8, border: "1px solid #e5e5ea", background: "#fff", cursor: "pointer", fontSize: 12 }}>{header}<span style={{ float: "right", color: "#007aff" }}>＋</span></button>)}
         {!headers.length && <p style={{ fontSize: 12, color: "#b33e36" }}>Import your CSV or Excel file first.</p>}
         <div style={{ marginTop: 18, fontSize: 11, color: "#6e6e73" }}>Placed: {fields.length}</div>
         <p style={{ marginTop: 15, fontSize: 10, color: "#6e6e73", lineHeight: 1.5 }}>Tip: select a field and use arrow keys to move it by 1 {units}. Shift + arrow moves 10 {units}; Alt + arrow moves 0.1 {units}.</p>
@@ -324,8 +497,162 @@ export default function TemplateDesigner({ template, format, headers, fields, sa
           <div ref={pageSurfaceRef} style={{ position: "relative", width: "100%", boxShadow: "0 5px 24px #1d1d1f24", lineHeight: 0, touchAction: "none", background: "white", cursor: panActive ? "grabbing" : "grab" }}>
             <canvas ref={canvasRef} style={{ display: "block", width: "100%", height: "auto", background: "white" }} />
             {currentFields.map((field) => {
-              const position = draftPositions[field.id] ?? field;
               const isSelected = selected === field.id;
+              const isImage = field.type === "image";
+              const draftPos = draftPositions[field.id];
+              const draftSize = draftSizes[field.id];
+
+              const posX = draftSize?.x ?? draftPos?.x ?? field.x;
+              const posY = draftSize?.y ?? draftPos?.y ?? field.y;
+              const position = { x: posX, y: posY };
+              const widthRatio = draftSize?.width ?? field.width ?? 0.2;
+              const heightRatio = draftSize?.height ?? field.height ?? 0.1;
+
+              if (isImage) {
+                const assetDataUrl = sampleAssets?.[field.id] || (field.sharedAssetId && assets?.[field.sharedAssetId]?.dataUrl);
+                const boxWidth = Math.max(20, widthRatio * canvasWidth);
+                const boxHeight = Math.max(16, heightRatio * (canvasWidth * (pageSize.height / pageSize.width)));
+                const widthPoints = Math.round(widthRatio * pageSize.width);
+                const heightPoints = Math.round(heightRatio * pageSize.height);
+
+                return (
+                  <div
+                    key={field.id}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`Position image ${field.name || field.column}: ${Math.round(posX * pageSize.width * 10) / 10} ${units} from left, size ${widthPoints} by ${heightPoints} ${units}`}
+                    onClick={() => setSelected(field.id)}
+                    onPointerDown={(event) => startDrag(event, field)}
+                    onPointerMove={dragTo}
+                    onPointerUp={finishDrag}
+                    onPointerCancel={finishDrag}
+                    style={{
+                      position: "absolute",
+                      left: `${posX * 100}%`,
+                      top: `${posY * 100}%`,
+                      width: `${boxWidth}px`,
+                      height: `${boxHeight}px`,
+                      padding: 0,
+                      background: "transparent",
+                      borderRadius: 4,
+                      cursor: "move",
+                      outline: isSelected ? "2px solid #007aff" : "1px dashed #007affb0",
+                      outlineOffset: 1,
+                      userSelect: "none",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      zIndex: isSelected ? 8 : 2,
+                    }}
+                  >
+                    <div style={{ width: "100%", height: "100%", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                      {assetDataUrl ? (
+                        <img
+                          src={assetDataUrl}
+                          alt={field.name || "Image preview"}
+                          style={{ width: "100%", height: "100%", objectFit: field.fit ?? "contain", pointerEvents: "none" }}
+                        />
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: "100%", height: "100%", background: "#f0f5ffcc", color: "#0067dc", fontSize: 10, padding: 4 }}>
+                          <ImageIcon size={15} />
+                          <span style={{ marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "95%" }}>{field.name || field.column || "Image"}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {isSelected && (
+                      <>
+                        <div
+                          style={{
+                            position: "absolute",
+                            bottom: -22,
+                            left: "50%",
+                            transform: "translateX(-50%)",
+                            background: "#1d1d1f",
+                            color: "#fff",
+                            fontSize: 10,
+                            padding: "2px 6px",
+                            borderRadius: 4,
+                            whiteSpace: "nowrap",
+                            pointerEvents: "none",
+                            zIndex: 20,
+                            lineHeight: "14px",
+                            boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
+                          }}
+                        >
+                          {widthPoints} × {heightPoints} {units}
+                        </div>
+
+                        <span
+                          onPointerDown={(e) => startResize(e, field, "nw")}
+                          onPointerMove={resizeTo}
+                          onPointerUp={finishResize}
+                          onPointerCancel={finishResize}
+                          style={{ position: "absolute", top: -5, left: -5, width: 10, height: 10, background: "#fff", border: "2px solid #007aff", borderRadius: "50%", cursor: "nwse-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          title="Resize top-left"
+                        />
+                        <span
+                          onPointerDown={(e) => startResize(e, field, "ne")}
+                          onPointerMove={resizeTo}
+                          onPointerUp={finishResize}
+                          onPointerCancel={finishResize}
+                          style={{ position: "absolute", top: -5, right: -5, width: 10, height: 10, background: "#fff", border: "2px solid #007aff", borderRadius: "50%", cursor: "nesw-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          title="Resize top-right"
+                        />
+                        <span
+                          onPointerDown={(e) => startResize(e, field, "se")}
+                          onPointerMove={resizeTo}
+                          onPointerUp={finishResize}
+                          onPointerCancel={finishResize}
+                          style={{ position: "absolute", bottom: -5, right: -5, width: 10, height: 10, background: "#fff", border: "2px solid #007aff", borderRadius: "50%", cursor: "nwse-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          title="Resize bottom-right"
+                        />
+                        <span
+                          onPointerDown={(e) => startResize(e, field, "sw")}
+                          onPointerMove={resizeTo}
+                          onPointerUp={finishResize}
+                          onPointerCancel={finishResize}
+                          style={{ position: "absolute", bottom: -5, left: -5, width: 10, height: 10, background: "#fff", border: "2px solid #007aff", borderRadius: "50%", cursor: "nesw-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          title="Resize bottom-left"
+                        />
+                        <span
+                          onPointerDown={(e) => startResize(e, field, "e")}
+                          onPointerMove={resizeTo}
+                          onPointerUp={finishResize}
+                          onPointerCancel={finishResize}
+                          style={{ position: "absolute", top: "50%", right: -4, transform: "translateY(-50%)", width: 8, height: 12, background: "#fff", border: "2px solid #007aff", borderRadius: 2, cursor: "ew-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          title="Resize width"
+                        />
+                        <span
+                          onPointerDown={(e) => startResize(e, field, "w")}
+                          onPointerMove={resizeTo}
+                          onPointerUp={finishResize}
+                          onPointerCancel={finishResize}
+                          style={{ position: "absolute", top: "50%", left: -4, transform: "translateY(-50%)", width: 8, height: 12, background: "#fff", border: "2px solid #007aff", borderRadius: 2, cursor: "ew-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          title="Resize width"
+                        />
+                        <span
+                          onPointerDown={(e) => startResize(e, field, "s")}
+                          onPointerMove={resizeTo}
+                          onPointerUp={finishResize}
+                          onPointerCancel={finishResize}
+                          style={{ position: "absolute", bottom: -4, left: "50%", transform: "translateX(-50%)", width: 12, height: 8, background: "#fff", border: "2px solid #007aff", borderRadius: 2, cursor: "ns-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          title="Resize height"
+                        />
+                        <span
+                          onPointerDown={(e) => startResize(e, field, "n")}
+                          onPointerMove={resizeTo}
+                          onPointerUp={finishResize}
+                          onPointerCancel={finishResize}
+                          style={{ position: "absolute", top: -4, left: "50%", transform: "translateX(-50%)", width: 12, height: 8, background: "#fff", border: "2px solid #007aff", borderRadius: 2, cursor: "ns-resize", zIndex: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }}
+                          title="Resize height"
+                        />
+                      </>
+                    )}
+                  </div>
+                );
+              }
+
               const cssFamily = field.fontFamily === "TimesRoman" ? "Times New Roman, Times, serif" : field.fontFamily === "Courier" ? "Courier, Courier New, monospace" : "Helvetica, Arial, sans-serif";
               const text = sample[field.id] || field.column;
               return <button
@@ -343,34 +670,262 @@ export default function TemplateDesigner({ template, format, headers, fields, sa
           </div>
           </div>
         </div>
-        {!fields.length && <p style={{ textAlign: "center", fontSize: 12, color: "#6e6e73", marginTop: 14 }}>Add a spreadsheet field to start designing.</p>}
+        {!fields.length && <p style={{ textAlign: "center", fontSize: 12, color: "#6e6e73", marginTop: 14 }}>Add a spreadsheet field or image to start designing.</p>}
         <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 10, fontSize: 11, color: "#6e6e73" }}><label style={{ display: "flex", alignItems: "center", gap: 5 }}><input type="checkbox" checked={snap} onChange={(event) => setSnap(event.target.checked)} /> Snap to 5 px grid while dragging</label></div>
       </div>
 
       <aside style={{ background: "#fff", borderLeft: "1px solid #e5e5ea", padding: 14, overflowY: "auto" }}>
         <strong style={{ fontSize: 13 }}>Field settings</strong>
-        {activeField ? <div style={{ display: "grid", gap: 12, marginTop: 14, fontSize: 12 }}>
-          <label>Spreadsheet column<select value={activeField.column} onChange={(event) => onUpdate(activeField.id, { column: event.target.value })} style={inputStyle}>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <label>X from left ({units})<input type="number" min="0" max={pageSize.width} step="0.1" value={round(activeField.x * pageSize.width)} onChange={(event) => setCoordinate("x", event.target.value)} style={inputStyle} /></label>
-            <label>Y from top ({units})<input type="number" min="0" max={pageSize.height} step="0.1" value={round(activeField.y * pageSize.height)} onChange={(event) => setCoordinate("y", event.target.value)} style={inputStyle} /></label>
+        {activeField ? (
+          <div style={{ display: "grid", gap: 12, marginTop: 14, fontSize: 12 }}>
+            <label>
+              Page scope
+              <select
+                value={activeField.pageScope ?? "current"}
+                onChange={(event) => onUpdate(activeField.id, { pageScope: event.target.value as PageScope })}
+                style={inputStyle}
+              >
+                <option value="current">Current page only (Page {page + 1})</option>
+                <option value="all">All pages (repeat across document)</option>
+                <option value="selected">Selected pages</option>
+              </select>
+            </label>
+            {activeField.pageScope === "selected" && (
+              <label>
+                Target page numbers (1 to {pageCount}, comma separated)
+                <input
+                  type="text"
+                  placeholder="e.g. 1, 2"
+                  value={(activeField.targetPages ?? [activeField.page]).map((p) => p + 1).join(", ")}
+                  onChange={(event) => {
+                    const parsed = event.target.value
+                      .split(",")
+                      .map((s) => parseInt(s.trim(), 10) - 1)
+                      .filter((n) => Number.isFinite(n) && n >= 0 && n < pageCount);
+                    onUpdate(activeField.id, { targetPages: parsed.length ? parsed : [activeField.page] });
+                  }}
+                  style={inputStyle}
+                />
+              </label>
+            )}
+
+            {activeField.type === "image" ? (
+              <>
+                <label>
+                  Field label
+                  <input
+                    type="text"
+                    value={activeField.name ?? activeField.column ?? "Signature"}
+                    placeholder="e.g. Authorized Signature"
+                    onChange={(event) => onUpdate(activeField.id, { name: event.target.value })}
+                    style={inputStyle}
+                  />
+                </label>
+                <label>
+                  Image source mode
+                  <select
+                    value={activeField.imageSourceMode ?? "shared"}
+                    onChange={(event) => onUpdate(activeField.id, { imageSourceMode: event.target.value as ImageSourceMode })}
+                    style={inputStyle}
+                  >
+                    <option value="shared">One shared image (same for all records)</option>
+                    <option value="record">One image per record (e.g. photo/signature)</option>
+                  </select>
+                </label>
+
+                {activeField.imageSourceMode === "shared" ? (
+                  <div>
+                    <span style={{ display: "block", marginBottom: 4, color: "#6e6e73", fontSize: 11 }}>Shared image asset:</span>
+                    {activeField.sharedAssetId && assets?.[activeField.sharedAssetId] ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: 6, border: "1px solid #e5e5ea", borderRadius: 8, background: "#fafafa" }}>
+                        {assets[activeField.sharedAssetId].dataUrl && (
+                          <img src={assets[activeField.sharedAssetId].dataUrl} alt="Thumbnail" style={{ width: 32, height: 32, objectFit: "contain", borderRadius: 4, background: "#fff", border: "1px solid #eee" }} />
+                        )}
+                        <span style={{ flex: 1, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {assets[activeField.sharedAssetId].name}
+                        </span>
+                        <label style={{ ...toolButtonStyle, cursor: "pointer", fontSize: 11 }}>
+                          Change
+                          <input type="file" accept="image/*" hidden onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file && onUploadSharedAsset) void onUploadSharedAsset(activeField.id, file);
+                            e.target.value = "";
+                          }} />
+                        </label>
+                      </div>
+                    ) : (
+                      <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: 8, border: "1.5px dashed #007aff80", borderRadius: 8, background: "#f5f9ff", cursor: "pointer", color: "#007aff", fontSize: 11 }}>
+                        <Upload size={13} /> Upload shared image
+                        <input type="file" accept="image/*" hidden onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file && onUploadSharedAsset) void onUploadSharedAsset(activeField.id, file);
+                          e.target.value = "";
+                        }} />
+                      </label>
+                    )}
+                  </div>
+                ) : (
+                  <label>
+                    Matching spreadsheet column
+                    <select
+                      value={activeField.column}
+                      onChange={(event) => onUpdate(activeField.id, { column: event.target.value })}
+                      style={inputStyle}
+                    >
+                      <option value="">Select column (or match by ID)</option>
+                      {headers.map((h) => <option key={h} value={h}>{h}</option>)}
+                    </select>
+                    <span style={{ display: "block", marginTop: 4, fontSize: 10, color: "#8e8e93" }}>
+                      Upload images in the Review step to match filenames or IDs.
+                    </span>
+                  </label>
+                )}
+
+                <div>
+                  <span style={{ display: "block", marginBottom: 5, color: "#6e6e73", fontSize: 11 }}>Size presets:</span>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    <button
+                      type="button"
+                      style={{ ...toolButtonStyle, fontSize: 11, padding: "3px 8px" }}
+                      onClick={() => onUpdate(activeField.id, { width: 0.22, height: 0.08, fit: "contain" })}
+                      title="Set signature proportions (horizontal rect)"
+                    >
+                      Signature
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...toolButtonStyle, fontSize: 11, padding: "3px 8px" }}
+                      onClick={() => onUpdate(activeField.id, { width: 0.16, height: 0.16, fit: "contain" })}
+                      title="Set square stamp or logo proportions"
+                    >
+                      Stamp / Logo
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...toolButtonStyle, fontSize: 11, padding: "3px 8px" }}
+                      onClick={() => onUpdate(activeField.id, { width: 0.20, height: 0.24, fit: "cover" })}
+                      title="Set portrait photograph (3:4)"
+                    >
+                      Photo (3:4)
+                    </button>
+                    <button
+                      type="button"
+                      style={{ ...toolButtonStyle, fontSize: 11, padding: "3px 8px" }}
+                      onClick={() => onUpdate(activeField.id, { width: 0.40, height: 0.12, fit: "contain" })}
+                      title="Set banner proportions"
+                    >
+                      Banner
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <label>
+                    Width ({units})
+                    <input
+                      type="number"
+                      min="10"
+                      max={pageSize.width}
+                      step="1"
+                      value={round((activeField.width ?? 0.2) * pageSize.width)}
+                      onChange={(event) => {
+                        const n = Number(event.target.value);
+                        if (Number.isFinite(n)) onUpdate(activeField.id, { width: clamp(n / pageSize.width, 0.02, 1) });
+                      }}
+                      style={inputStyle}
+                    />
+                  </label>
+                  <label>
+                    Height ({units})
+                    <input
+                      type="number"
+                      min="10"
+                      max={pageSize.height}
+                      step="1"
+                      value={round((activeField.height ?? 0.1) * pageSize.height)}
+                      onChange={(event) => {
+                        const n = Number(event.target.value);
+                        if (Number.isFinite(n)) onUpdate(activeField.id, { height: clamp(n / pageSize.height, 0.02, 1) });
+                      }}
+                      style={inputStyle}
+                    />
+                  </label>
+                </div>
+                <span style={{ display: "block", fontSize: 10, color: "#8e8e93", lineHeight: 1.4 }}>
+                  Drag corner/edge handles on page to resize, or use Shift + Arrow keys to adjust size.
+                </span>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <label>X from left ({units})<input type="number" min="0" max={pageSize.width} step="0.1" value={round(activeField.x * pageSize.width)} onChange={(event) => setCoordinate("x", event.target.value)} style={inputStyle} /></label>
+                  <label>Y from top ({units})<input type="number" min="0" max={pageSize.height} step="0.1" value={round(activeField.y * pageSize.height)} onChange={(event) => setCoordinate("y", event.target.value)} style={inputStyle} /></label>
+                </div>
+
+                <label>
+                  Fit behavior
+                  <select
+                    value={activeField.fit ?? "contain"}
+                    onChange={(event) => onUpdate(activeField.id, { fit: event.target.value as ImageFit })}
+                    style={inputStyle}
+                  >
+                    <option value="contain">Contain (preserve proportions inside box)</option>
+                    <option value="cover">Cover (fill entire bounding box)</option>
+                    <option value="fill">Fill (stretch to exact box dimensions)</option>
+                  </select>
+                </label>
+
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={activeField.preserveAspectRatio !== false}
+                    onChange={(event) => onUpdate(activeField.id, { preserveAspectRatio: event.target.checked })}
+                  />
+                  Preserve aspect ratio
+                </label>
+
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={activeField.required !== false}
+                    onChange={(event) => onUpdate(activeField.id, { required: event.target.checked })}
+                  />
+                  Require image for every record
+                </label>
+              </>
+            ) : (
+              <>
+                <label>Spreadsheet column<select value={activeField.column} onChange={(event) => onUpdate(activeField.id, { column: event.target.value })} style={inputStyle}>{headers.map((header) => <option key={header} value={header}>{header}</option>)}</select></label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <label>X from left ({units})<input type="number" min="0" max={pageSize.width} step="0.1" value={round(activeField.x * pageSize.width)} onChange={(event) => setCoordinate("x", event.target.value)} style={inputStyle} /></label>
+                  <label>Y from top ({units})<input type="number" min="0" max={pageSize.height} step="0.1" value={round(activeField.y * pageSize.height)} onChange={(event) => setCoordinate("y", event.target.value)} style={inputStyle} /></label>
+                </div>
+                <label>Font size ({units})<input type="number" min="4" max="200" step="0.5" value={round(activeField.size * pageSize.width)} onChange={(event) => { const n = Number(event.target.value); if (Number.isFinite(n)) onUpdate(activeField.id, { size: clamp(n, 4, 200) / pageSize.width }); }} style={inputStyle} /></label>
+                <input aria-label="Font size slider" type="range" min={4 / pageSize.width} max={96 / pageSize.width} step={0.5 / pageSize.width} value={activeField.size} onChange={(event) => onUpdate(activeField.id, { size: Number(event.target.value) })} style={{ width: "100%", marginTop: -8 }} />
+                <label>Font family<select value={activeField.fontFamily ?? "Helvetica"} onChange={(event) => onUpdate(activeField.id, { fontFamily: event.target.value as PositionedField["fontFamily"] })} style={inputStyle}>{FONT_FAMILIES.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}</select></label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button type="button" aria-pressed={!!activeField.bold} onClick={() => onUpdate(activeField.id, { bold: !activeField.bold })} style={{ ...toolButtonStyle, minWidth: 38, fontWeight: 700, background: activeField.bold ? "#eaf3ff" : "#fff" }}>B</button>
+                  <button type="button" aria-pressed={!!activeField.italic} onClick={() => onUpdate(activeField.id, { italic: !activeField.italic })} style={{ ...toolButtonStyle, minWidth: 38, fontStyle: "italic", background: activeField.italic ? "#eaf3ff" : "#fff" }}>I</button>
+                  <button type="button" aria-pressed={!!activeField.underline} onClick={() => onUpdate(activeField.id, { underline: !activeField.underline })} style={{ ...toolButtonStyle, minWidth: 38, textDecoration: "underline", background: activeField.underline ? "#eaf3ff" : "#fff" }}>U</button>
+                </div>
+                <label>Color<input aria-label="Text color" type="color" value={activeField.color} onChange={(event) => onUpdate(activeField.id, { color: event.target.value })} style={{ ...inputStyle, height: 38, padding: 3 }} /></label>
+                <label>Alignment<select value={activeField.align} onChange={(event) => onUpdate(activeField.id, { align: event.target.value as PositionedField["align"] })} style={inputStyle}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
+              </>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7, marginTop: 6 }}>
+              <button onClick={() => { const id = onDuplicate(activeField.id); if (id) setSelected(id); }} style={toolButtonStyle}>Duplicate</button>
+              <button onClick={() => { onRemove(activeField.id); setSelected(null); }} style={{ ...toolButtonStyle, color: "#b33e36", borderColor: "#efd2ce" }}>Remove</button>
+            </div>
+            <p style={{ margin: 0, color: "#6e6e73", fontSize: 10, lineHeight: 1.45 }}>Coordinates are measured from the page’s top-left. Arrow keys move the selected field. Delete removes it. PDF sizes use points; image sizes use image pixels.</p>
           </div>
-          <label>Font size ({units})<input type="number" min="4" max="200" step="0.5" value={round(activeField.size * pageSize.width)} onChange={(event) => { const n = Number(event.target.value); if (Number.isFinite(n)) onUpdate(activeField.id, { size: clamp(n, 4, 200) / pageSize.width }); }} style={inputStyle} /></label>
-          <input aria-label="Font size slider" type="range" min={4 / pageSize.width} max={96 / pageSize.width} step={0.5 / pageSize.width} value={activeField.size} onChange={(event) => onUpdate(activeField.id, { size: Number(event.target.value) })} style={{ width: "100%", marginTop: -8 }} />
-          <label>Font family<select value={activeField.fontFamily ?? "Helvetica"} onChange={(event) => onUpdate(activeField.id, { fontFamily: event.target.value as PositionedField["fontFamily"] })} style={inputStyle}>{FONT_FAMILIES.map((font) => <option key={font.value} value={font.value}>{font.label}</option>)}</select></label>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button type="button" aria-pressed={!!activeField.bold} onClick={() => onUpdate(activeField.id, { bold: !activeField.bold })} style={{ ...toolButtonStyle, minWidth: 38, fontWeight: 700, background: activeField.bold ? "#eaf3ff" : "#fff" }}>B</button>
-            <button type="button" aria-pressed={!!activeField.italic} onClick={() => onUpdate(activeField.id, { italic: !activeField.italic })} style={{ ...toolButtonStyle, minWidth: 38, fontStyle: "italic", background: activeField.italic ? "#eaf3ff" : "#fff" }}>I</button>
-            <button type="button" aria-pressed={!!activeField.underline} onClick={() => onUpdate(activeField.id, { underline: !activeField.underline })} style={{ ...toolButtonStyle, minWidth: 38, textDecoration: "underline", background: activeField.underline ? "#eaf3ff" : "#fff" }}>U</button>
+        ) : (
+          <div style={{ marginTop: 14, padding: 13, borderRadius: 10, background: "#f5f5f7", color: "#6e6e73", fontSize: 11, lineHeight: 1.55 }}>
+            <strong style={{ display: "block", color: "#1d1d1f", marginBottom: 7 }}>How to place your information</strong>
+            <span>1. Click a column or “Add image / signature”.</span><br />
+            <span>2. Drag the field to position it on the document.</span><br />
+            <span>3. Choose page scope (e.g. repeat on All pages).</span><br />
+            <span>4. Adjust dimensions, fit, or font here.</span>
           </div>
-          <label>Color<input aria-label="Text color" type="color" value={activeField.color} onChange={(event) => onUpdate(activeField.id, { color: event.target.value })} style={{ ...inputStyle, height: 38, padding: 3 }} /></label>
-          <label>Alignment<select value={activeField.align} onChange={(event) => onUpdate(activeField.id, { align: event.target.value as PositionedField["align"] })} style={inputStyle}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
-            <button onClick={() => { const id = onDuplicate(activeField.id); if (id) setSelected(id); }} style={toolButtonStyle}>Duplicate</button>
-            <button onClick={() => { onRemove(activeField.id); setSelected(null); }} style={{ ...toolButtonStyle, color: "#b33e36", borderColor: "#efd2ce" }}>Remove</button>
-          </div>
-          <p style={{ margin: 0, color: "#6e6e73", fontSize: 10, lineHeight: 1.45 }}>Coordinates are measured from the page’s top-left. Arrow keys move the selected field. Delete removes it. PDF sizes use points; image sizes use image pixels.</p>
-        </div> : <div style={{ marginTop: 14, padding: 13, borderRadius: 10, background: "#f5f5f7", color: "#6e6e73", fontSize: 11, lineHeight: 1.55 }}><strong style={{ display: "block", color: "#1d1d1f", marginBottom: 7 }}>How to place your information</strong><span>1. Click a spreadsheet column on the left.</span><br /><span>2. Drag the new text to the right place.</span><br /><span>3. Adjust size, font, or alignment here.</span></div>}
+        )}
       </aside>
       {expanded && <footer style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "10px 16px", background: "#fff", borderTop: "1px solid #e5e5ea" }}>
         <button type="button" className="button secondary" onClick={onBack}><span aria-hidden="true">←</span> Back to data</button>
