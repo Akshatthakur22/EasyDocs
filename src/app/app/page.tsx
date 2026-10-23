@@ -2,14 +2,14 @@ import type { Metadata } from "next";
 import Workbench from "@/components/Workbench";
 
 export const metadata: Metadata = {
-  title: "Document Studio — Create Bulk Personalized PDFs",
+  title: "Document Studio — Free Bulk PDF & Document Generator",
   description:
-    "Upload a document template, import your spreadsheet, place text and dynamic signatures, and generate personalized PDFs in bulk.",
+    "Open the EasyDocs Document Studio: upload your PDF or Word template, connect an Excel spreadsheet, visually place dynamic text and signatures, and export personalized PDF batches 100% locally.",
   alternates: {
     canonical: "/app",
   },
   robots: {
-    index: false, // The workbench tool is an application screen, avoid indexing user session state
+    index: true,
     follow: true,
   },
 };
