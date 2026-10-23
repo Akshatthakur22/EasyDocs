@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { importCsv, importXlsx, normalizeHeader, suggestMapping } from "@/lib/dataset";
+import { importCsv, importXlsx, normalizeHeader, suggestMapping, validateDatasetFileSize } from "@/lib/dataset";
 
 describe("dataset import and field suggestions", () => {
   it("preserves CSV strings and leading zeroes", async () => {
@@ -39,5 +39,12 @@ describe("dataset import and field suggestions", () => {
     expect(result.sheetNames).toEqual(["Roster", "Notes"]);
     expect(result.sheetName).toBe("Roster");
     expect(result.rows[0].Enrollment).toBe("00021");
+  });
+
+  it("rejects oversized spreadsheet files before reading or parsing them", async () => {
+    const file = new File(["Name\nAvery\n"], "large.csv", { type: "text/csv" });
+    Object.defineProperty(file, "size", { value: 26 * 1024 * 1024 });
+    expect(() => validateDatasetFileSize(file)).toThrow("larger than 25 MB");
+    await expect(importCsv(file)).rejects.toThrow("larger than 25 MB");
   });
 });

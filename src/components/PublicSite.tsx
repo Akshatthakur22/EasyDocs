@@ -132,7 +132,7 @@ export function AboutPage() {
           <div role="listitem"><strong>Spreadsheets</strong><span>CSV · XLS · XLSX · XLSM</span></div>
           <div role="listitem"><strong>Exports</strong><span>PDFs · ZIP archive · Combined PDF</span></div>
         </div>
-        <p className="format-limit"><strong>A note on layout:</strong> Word conversion can change pagination or spacing. Scanned pages and flat PDFs act as backgrounds; EasyDocs places new text over them and does not edit the original printed text. Review the converted page and a generated sample before making a full batch.</p>
+        <p className="format-limit"><strong>A note on layout:</strong> Word conversion can change pagination or spacing. Scanned pages and flat PDFs act as backgrounds; EasyDocs places new text over them and does not edit the original printed text. Image templates use a documented 96 pixels-per-inch policy to establish physical PDF size. Review the converted page and a generated sample before making a full batch.</p>
       </section>
 
       <section className="creator-section" aria-labelledby="creator-title">
@@ -189,7 +189,7 @@ export function PrivacyPage() {
 
       <section className="privacy-details" aria-label="How EasyDocs handles your files">
         <article><span className="privacy-detail-index">01</span><div><h2>Files saved in this browser</h2><p>Templates, imported rows, batch state, and generated PDFs are saved in this browser’s IndexedDB so a batch can be recovered. Batches and templates older than seven days are removed when the app opens.</p></div></article>
-        <article><span className="privacy-detail-index">02</span><div><h2>Local processing</h2><p>PDF and image templates are handled in the browser. DOC/DOCX and legacy XLS conversion runs in a browser worker. Document contents are not sent to a conversion API.</p></div></article>
+        <article><span className="privacy-detail-index">02</span><div><h2>Local processing</h2><p>PDF and image templates are handled in the browser. DOC/DOCX and legacy XLS conversion runs in a browser worker. Document contents are not sent to a conversion API. Image print dimensions use a documented 96 pixels-per-inch policy.</p></div></article>
         <article><span className="privacy-detail-index">03</span><div><h2>Downloads and deletion</h2><p>Downloads are created by your browser. Use “Delete all local data” in the app to remove EasyDocs templates, batches, and generated files from this browser. Clearing site data also removes them.</p></div></article>
         <article><span className="privacy-detail-index">04</span><div><h2>Storage limits</h2><p>Browser settings or available device storage can affect local files. A batch is not synced across devices. Review generated PDFs before sharing or printing them.</p></div></article>
       </section>

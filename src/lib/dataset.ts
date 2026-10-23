@@ -1,6 +1,12 @@
 import Papa from "papaparse";
 import type { ImportResult } from "@/lib/types";
-import { MAX_BATCH_ROWS } from "@/lib/types";
+import { MAX_BATCH_ROWS, MAX_DATASET_FILE_SIZE_BYTES } from "@/lib/types";
+
+export function validateDatasetFileSize(file: Pick<File, "name" | "size">): void {
+  if (file.size > MAX_DATASET_FILE_SIZE_BYTES) {
+    throw new Error(`This spreadsheet is larger than 25 MB. Choose a smaller file (current size: ${Math.ceil(file.size / (1024 * 1024))} MB).`);
+  }
+}
 
 function headerDisplay(value: unknown, index: number): string {
   const text = String(value ?? "").trim();
@@ -39,6 +45,7 @@ function toImportResult(matrix: unknown[][], _sourceType: "csv" | "xlsx", sheetN
 }
 
 export async function importCsv(file: File): Promise<ImportResult> {
+  validateDatasetFileSize(file);
   const text = await file.text();
   const parsed = Papa.parse<unknown[]>(text, { skipEmptyLines: "greedy", dynamicTyping: false });
   const error = parsed.errors.find((item) => item.type === "Delimiter");
@@ -55,6 +62,7 @@ export async function importCsv(file: File): Promise<ImportResult> {
 }
 
 export async function importXlsx(file: File, selectedSheet?: string): Promise<ImportResult & { sheetNames: string[] }> {
+  validateDatasetFileSize(file);
   const { default: ExcelJS } = await import("exceljs");
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(await file.arrayBuffer());

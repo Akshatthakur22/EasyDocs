@@ -89,6 +89,7 @@ export interface TemplateInspection {
 }
 
 export const MAX_BATCH_ROWS = 500;
+export const MAX_DATASET_FILE_SIZE_BYTES = 25 * 1024 * 1024;
 export const LOCAL_RETENTION_DAYS = 7;
 
 export function createId(): string {

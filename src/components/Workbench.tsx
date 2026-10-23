@@ -2,7 +2,6 @@
 
 import { ChangeEvent, DragEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import JSZip from "jszip";
 import { PDFDocument } from "pdf-lib";
 import TemplateDesigner from "@/components/TemplateDesigner";
 import {
@@ -12,8 +11,9 @@ import {
   Upload, X, XCircle
 } from "lucide-react";
 import { cleanupExpiredData, clearBatch, db, loadBatch, persistBatch } from "@/lib/database";
-import { getFilenameValue, getRowValue, importCsv, importXlsx } from "@/lib/dataset";
+import { getFilenameValue, getRowValue, importCsv, importXlsx, validateDatasetFileSize } from "@/lib/dataset";
 import { convertDocumentToPdf, convertLegacyXlsToXlsx } from "@/lib/office-engine";
+import { createCombinedPdf, createPdfZip } from "@/lib/exports";
 import { renderPositionedTemplate } from "@/lib/template";
 import { createId, MAX_BATCH_ROWS, type Batch, type DataRow, type ImportResult, type PositionedField, type SavedTemplate, type TemplateFormat } from "@/lib/types";
 
@@ -102,6 +102,7 @@ export default function Workbench() {
   const designUndoRef = useRef<PositionedField[][]>([]);
   const designRedoRef = useRef<PositionedField[][]>([]);
   const designHistoryBatchRef = useRef(batch.id);
+  const rowEditVersionsRef = useRef(new Map<string, number>());
 
   const syncDesignHistory = useCallback(() => {
     setDesignCanUndo(designUndoRef.current.length > 0);
@@ -383,6 +384,7 @@ export default function Workbench() {
     setError("");
     setDatasetFile(file);
     try {
+      validateDatasetFileSize(file);
       const isLegacyXls = /\.xls$/i.test(file.name) && !/\.xlsx$/i.test(file.name);
       const isXlsx = /\.(xlsx|xlsm)$/i.test(file.name) || isLegacyXls;
       const workbookFile = isLegacyXls
@@ -410,21 +412,31 @@ export default function Workbench() {
     await commitBatch(nextBatch, nextRows);
   }, [batch, commitBatch, rows]);
 
-  const updateRowValue = useCallback((rowId: number, header: string, value: string) => {
-    setRows((current) => {
-      const updated = current.map((row) => row.id === rowId
-        ? { ...row, values: { ...row.values, [header]: value }, status: "pending" as const, error: undefined, docx: undefined, pdf: undefined }
-        : row);
-      const row = updated.find((item) => item.id === rowId);
-      if (row) void db.rows.put({ ...row, batchId: batch.id });
-      return updated;
-    });
+  const updateRowValue = useCallback(async (rowId: number, header: string, value: string) => {
+    const currentRow = rows.find((row) => row.id === rowId);
+    if (!currentRow) return;
+    const updatedRow = { ...currentRow, values: { ...currentRow.values, [header]: value }, status: "pending" as const, error: undefined, docx: undefined, pdf: undefined };
     const nextBatch = { ...batch, updatedAt: Date.now(), status: "draft" as const };
+    const editKey = `${rowId}:${header}`;
+    const version = (rowEditVersionsRef.current.get(editKey) ?? 0) + 1;
+    rowEditVersionsRef.current.set(editKey, version);
+    setRows((current) => current.map((row) => row.id === rowId ? updatedRow : row));
     setBatch(nextBatch);
-    void db.batches.put(nextBatch);
+    try {
+      await db.transaction("rw", db.rows, db.batches, async () => {
+        await db.rows.put({ ...updatedRow, batchId: batch.id });
+        await db.batches.put(nextBatch);
+      });
+      if (rowEditVersionsRef.current.get(editKey) === version) setError("");
+    } catch {
+      if (rowEditVersionsRef.current.get(editKey) === version) {
+        setRows((current) => current.map((row) => row.id === rowId ? currentRow : row));
+        setError("This edit could not be saved and was reverted. Check available browser storage, then try again.");
+      }
+    }
     setPreviewUrl("");
     setPreviewError("");
-  }, [batch]);
+  }, [batch, rows]);
 
   const newBatch = useCallback(async () => {
     setError("");
@@ -542,18 +554,7 @@ export default function Workbench() {
     setBusy(true);
     setExportProgress(0);
     try {
-      const zip = new JSZip();
-      const used = new Set<string>();
-      for (const row of completed) {
-        const base = artifactBase(row, batch);
-        let unique = base;
-        let suffix = 2;
-        while (used.has(unique.toLocaleLowerCase())) unique = `${base}_${suffix++}`;
-        used.add(unique.toLocaleLowerCase());
-        if (row.pdf) zip.file(`PDF/${unique}.pdf`, row.pdf);
-      }
-      zip.file("batch-summary.txt", `EasyDocs batch export\nTemplate: ${templateName}\nSpreadsheet: ${batch.datasetName ?? ""}\nGenerated PDFs: ${completed.length}\nFailed: ${counts.failed}\nExcluded: ${counts.excluded}\n\nPrintable files are in PDF/.\n`);
-      const blob = await zip.generateAsync({ type: "blob" }, (metadata) => setExportProgress(Math.round(metadata.percent)));
+      const blob = await createPdfZip(completed, (row) => artifactBase(row, batch), `EasyDocs batch export\nTemplate: ${templateName}\nSpreadsheet: ${batch.datasetName ?? ""}\nGenerated PDFs: ${completed.length}\nFailed: ${counts.failed}\nExcluded: ${counts.excluded}\n\nPrintable files are in PDF/.\n`, setExportProgress);
       saveFile(blob, `easydocs_${batch.id.slice(0, 8)}.zip`);
       say("ZIP export downloaded.");
     } catch (reason) {
@@ -570,16 +571,8 @@ export default function Workbench() {
     setBusy(true);
     setExportProgress(0);
     try {
-      const combined = await PDFDocument.create();
-      for (const [index, row] of completed.entries()) {
-        const source = await PDFDocument.load(await row.pdf!.arrayBuffer());
-        const pages = await combined.copyPages(source, source.getPageIndices());
-        pages.forEach((page) => combined.addPage(page));
-        setExportProgress(Math.round(((index + 1) / completed.length) * 100));
-        await new Promise((resolve) => window.setTimeout(resolve, 0));
-      }
-      const bytes = await combined.save();
-      saveFile(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }), `easydocs_print_${batch.id.slice(0, 8)}.pdf`);
+      const blob = await createCombinedPdf(completed, (percent) => setExportProgress(percent));
+      saveFile(blob, `easydocs_print_${batch.id.slice(0, 8)}.pdf`);
       say(`${completed.length} documents combined in spreadsheet order.`);
     } catch (reason) {
       setError(`Could not create the combined PDF: ${reason instanceof Error ? reason.message : "The file is too large for available browser memory."}`);
@@ -695,8 +688,8 @@ export default function Workbench() {
             {step === 1 && <section className="card">
               <div className="card-head"><div><div className="step-kicker">STEP 01 · TEMPLATE</div><h2>Choose your document</h2><p>Upload a page to personalize. Word files are converted to PDF before placement.</p></div><span className="format-badge"><FileText size={13} /> PNG · JPG · PDF · WORD</span></div>
               <div className="card-body">
-                {templateBlob ? <div className="file-card"><span className="file-icon"><FileCheck2 size={20} /></span><span className="file-meta"><span className="file-name">{templateName}</span><span className="file-sub">{fileSize(templateBlob.size)} · {batch.fields.length} placed fields</span></span><span className="file-actions"><button className="button secondary small" onClick={() => templateInput.current?.click()} disabled={busy}><RotateCcw size={13} /><span>Replace</span></button><button className="button ghost small" onClick={() => setRecentTemplatePage(true)}>Library</button></span></div> : <div className={`dropzone ${draggingTemplate ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDraggingTemplate(true); }} onDragLeave={() => setDraggingTemplate(false)} onDrop={(event) => dropFile(event, "template")}>
-                  <div className="drop-icon"><Upload size={21} /></div><div className="drop-title">Drop a document here to begin</div><div className="drop-help">PNG, JPG, PDF, DOC, DOCX · up to 25 MB · kept on this device</div><button className="button" onClick={() => templateInput.current?.click()} disabled={busy}>{busy ? <LoaderCircle size={14} className="spin" /> : <FolderOpen size={14} />} Choose a template</button><a className="small-link sample-link" href="/sample-attendance-warning.docx" download>Download sample template</a>
+                {templateBlob ? <div className="file-card"><span className="file-icon"><FileCheck2 size={20} /></span><span className="file-meta"><span className="file-name">{templateName}</span><span className="file-sub">{fileSize(templateBlob.size)} · {batch.fields.length} placed fields{batch.templateFormat === "image" ? " · image size at 96 px/in" : ""}</span></span><span className="file-actions"><button className="button secondary small" onClick={() => templateInput.current?.click()} disabled={busy}><RotateCcw size={13} /><span>Replace</span></button><button className="button ghost small" onClick={() => setRecentTemplatePage(true)}>Library</button></span></div> : <div className={`dropzone ${draggingTemplate ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDraggingTemplate(true); }} onDragLeave={() => setDraggingTemplate(false)} onDrop={(event) => dropFile(event, "template")}>
+                  <div className="drop-icon"><Upload size={21} /></div><div className="drop-title">Drop a document here to begin</div><div className="drop-help">PNG, JPG, PDF, DOC, DOCX · up to 25 MB · kept on this device. Image print size uses a documented 96 px/in policy.</div><button className="button" onClick={() => templateInput.current?.click()} disabled={busy}>{busy ? <LoaderCircle size={14} className="spin" /> : <FolderOpen size={14} />} Choose a template</button><a className="small-link sample-link" href="/sample-attendance-warning.docx" download>Download sample template</a>
                 </div>}
                 <input ref={templateInput} type="file" accept=".doc,.docx,.pdf,.png,.jpg,.jpeg,image/png,image/jpeg,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" hidden onChange={handleTemplateInput} />
                 {templateBlob && batch.fields.length > 0 && <><div className="section-label">Saved fields</div><div className="placeholder-chips">{batch.fields.map((field) => <span className="mapping-tag" key={field.id}>{field.column}</span>)}</div></>}
@@ -709,7 +702,7 @@ export default function Workbench() {
               <div className="card-head"><div><div className="step-kicker">STEP 02 · DATA</div><h2>Import your spreadsheet</h2><p>Use one header row and one record per row. You can review the imported values before mapping.</p></div><span className="format-badge"><FileSpreadsheet size={13} /> CSV · XLS · XLSX · XLSM</span></div>
               <div className="card-body">
                 {rows.length ? <div className="file-card"><span className="file-icon"><FileSpreadsheet size={20} /></span><span className="file-meta"><span className="file-name">{batch.datasetName}</span><span className="file-sub">{rows.length} records · {batch.headers.length} columns{batch.sheetName ? ` · ${batch.sheetName}` : ""}</span></span><span className="file-actions"><button className="button secondary small" onClick={() => dataInput.current?.click()} disabled={busy}><RotateCcw size={13} /> Replace data</button></span></div> : <div className={`dropzone ${draggingData ? "dragging" : ""}`} onDragOver={(event) => { event.preventDefault(); setDraggingData(true); }} onDragLeave={() => setDraggingData(false)} onDrop={(event) => dropFile(event, "data")}>
-                  <div className="drop-icon"><FileSpreadsheet size={21} /></div><div className="drop-title">Drop your CSV or Excel file here</div><div className="drop-help">CSV, XLS, XLSX, XLSM · up to {MAX_BATCH_ROWS} rows · processed in this browser</div><button className="button" onClick={() => dataInput.current?.click()} disabled={busy}>{busy ? <LoaderCircle size={14} className="spin" /> : <FolderOpen size={14} />} Choose spreadsheet</button><a className="small-link sample-link" href="/sample-students.csv" download>Download sample data</a>
+                  <div className="drop-icon"><FileSpreadsheet size={21} /></div><div className="drop-title">Drop your CSV or Excel file here</div><div className="drop-help">CSV, XLS, XLSX, XLSM · up to 25 MB and {MAX_BATCH_ROWS} rows · processed in this browser</div><button className="button" onClick={() => dataInput.current?.click()} disabled={busy}>{busy ? <LoaderCircle size={14} className="spin" /> : <FolderOpen size={14} />} Choose spreadsheet</button><a className="small-link sample-link" href="/sample-students.csv" download>Download sample data</a>
                 </div>}
                 <input ref={dataInput} type="file" accept=".csv,.xlsx,.xlsm,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden onChange={handleDataInput} />
                 {rows.length > 0 && sheetNames.length > 1 && datasetFile && <div className="sheet-select"><label htmlFor="sheet-select">Worksheet</label><select id="sheet-select" className="select" value={selectedSheet} onChange={(event) => { setSelectedSheet(event.target.value); void handleDataFile(datasetFile, event.target.value); }}>{sheetNames.map((name) => <option key={name}>{name}</option>)}</select></div>}

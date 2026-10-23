@@ -6,6 +6,20 @@ import type { TemplateInspection } from "@/lib/types";
 
 const SUPPORTED_NAME = /^[\p{L}_][\p{L}\p{N}_. -]*$/u;
 const TOKEN_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
+/** Image pixels are interpreted as CSS pixels at 96 px/in when creating printable PDFs. */
+export const IMAGE_TEMPLATE_DPI = 96;
+
+export function imagePixelDimensionsToPdfPoints(width: number, height: number) {
+  const pointsPerPixel = 72 / IMAGE_TEMPLATE_DPI;
+  return { width: width * pointsPerPixel, height: height * pointsPerPixel };
+}
+
+export function getFieldPdfPosition(field: PositionedField, pageWidth: number, pageHeight: number, textWidth: number, ascent: number) {
+  const anchor = field.x * pageWidth;
+  const x = field.align === "center" ? anchor - textWidth / 2 : field.align === "right" ? anchor - textWidth : anchor;
+  const baselineFromTop = field.y * pageHeight + ascent;
+  return { x, baselineFromTop };
+}
 
 function wordXmlFiles(zip: PizZip) {
   return zip.file(/^word\/(document|header\d*|footer\d*|footnotes|endnotes)\.xml$/);
@@ -75,7 +89,8 @@ export async function renderPositionedTemplate(template: Blob, format: TemplateF
   if (format === "image") {
     const bytes = new Uint8Array(await template.arrayBuffer());
     const image = template.type === "image/png" ? await pdf.embedPng(bytes) : await pdf.embedJpg(bytes);
-    pdf.addPage([image.width, image.height]).drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+    const dimensions = imagePixelDimensionsToPdfPoints(image.width, image.height);
+    pdf.addPage([dimensions.width, dimensions.height]).drawImage(image, { x: 0, y: 0, width: dimensions.width, height: dimensions.height });
   }
   if (!pdf.getPageCount()) throw new Error("The selected template has no printable pages.");
   for (const field of fields) {
@@ -93,12 +108,21 @@ export async function renderPositionedTemplate(template: Blob, format: TemplateF
     const rotation = ((page.getRotation().angle % 360) + 360) % 360;
     const displayWidth = rotation === 90 || rotation === 270 ? crop.height : crop.width;
     const displayHeight = rotation === 90 || rotation === 270 ? crop.width : crop.height;
+    if (/[\r\n]/.test(value)) throw new Error(`The value for “${field.column}” contains multiple lines. EasyDocs currently places one line per field.`);
     const fontSize = Math.max(4, field.size * displayWidth);
-    const width = font.widthOfTextAtSize(value, fontSize);
-    const anchor = field.x * displayWidth;
-    const displayX = field.align === "center" ? anchor - width / 2 : field.align === "right" ? anchor - width : anchor;
-    const ascent = font.heightAtSize(fontSize, { descender: false });
-    const baselineFromTop = field.y * displayHeight + ascent;
+    let width: number;
+    let ascent: number;
+    try {
+      font.encodeText(value);
+      width = font.widthOfTextAtSize(value, fontSize);
+      ascent = font.heightAtSize(fontSize, { descender: false });
+    } catch {
+      throw new Error(`The value for “${field.column}” contains characters the built-in PDF fonts cannot render. Hindi and other scripts need font support that is not available yet; use supported Latin characters for this field.`);
+    }
+    const { x: displayX, baselineFromTop } = getFieldPdfPosition(field, displayWidth, displayHeight, width, ascent);
+    if (displayX < 0 || displayX + width > displayWidth || field.y < 0 || field.y * displayHeight + fontSize > displayHeight) {
+      throw new Error(`The value for “${field.column}” extends beyond the page. Move the field inward or reduce its font size.`);
+    }
     const toPdfPoint = (x: number, yFromTop: number) => {
       if (rotation === 90) return { x: crop.x + yFromTop, y: crop.y + x };
       if (rotation === 180) return { x: crop.x + crop.width - x, y: crop.y + yFromTop };

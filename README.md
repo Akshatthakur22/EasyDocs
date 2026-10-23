@@ -16,20 +16,20 @@ Open `http://localhost:3000` for the product overview, or go directly to `http:/
 ## Workflow and formats
 
 - **Templates:** `.png`, `.jpg`, `.pdf`, `.doc`, and `.docx`. Word files are converted locally to PDF pages; every template becomes a static background that can have fields placed on top. PDFs can be flat or scanned because placement is visual; DOC/DOCX conversion may affect layout.
-- **Data:** `.csv`, `.xls`, `.xlsx`, and `.xlsm`; older `.xls` workbooks are converted locally before parsing. XLSX workbooks can contain multiple sheets. Text values, quoted CSV values, and text-based leading zeroes are preserved. The current local batch limit is 500 records.
+- **Data:** `.csv`, `.xls`, `.xlsx`, and `.xlsm`; older `.xls` workbooks are converted locally before parsing. XLSX workbooks can contain multiple sheets. Text values, quoted CSV values, and text-based leading zeroes are preserved. Dataset files are limited to 25 MB and batches to 500 records.
 - **Design:** Add any spreadsheet column to the page preview, drag it to an exact position, and set text size, color, alignment, page, and source column.
 - **Per-record output:** printable `.pdf` files with the selected template background and personalized text overlays.
 - **Batch output:** ZIP of successful PDFs and a combined PDF in input row order.
 
-PDF rendering uses the LibreOffice WebAssembly runtime through the same-origin `/office-runtime/*` route. The first PDF preview or batch requests the runtime files (about 75 MB plus 28 MB compressed) from the EasyDocs host and browsers may cache them. The runtime is public software; templates, spreadsheet rows, and generated documents are not sent to an external conversion service. COOP and COEP response headers are enabled because the renderer uses shared memory.
+Word-to-PDF and legacy XLS-to-XLSX conversion use the LibreOffice WebAssembly runtime through the same-origin `/office-runtime/*` route. The first such conversion requests runtime files (about 75 MB plus 28 MB compressed) from the EasyDocs host and browsers may cache them. PDF overlays and exports are processed in the browser with `pdf-lib`; templates, spreadsheet rows, and generated documents are not sent to an external conversion service. COOP and COEP response headers are enabled because the conversion runtime uses shared memory.
 
 ### Fidelity notes
 
-Fields are positioned relative to each page, so they stay aligned when the preview scales. Word documents are flattened to PDF backgrounds before field design; their text does not reflow around added values. LibreOffice may change pagination, fonts, or layout during this conversion. Text overlays currently use a standard Latin font; Hindi and other non-Latin scripts need a separate embedded-font pass before they can be promised. Review the generated preview and print a sample before relying on a template.
+Fields are positioned relative to each page, so they stay aligned when the preview scales. Image dimensions use an explicit 96 pixels-per-inch policy when creating PDF pages. Word documents are flattened to PDF backgrounds before field design; their text does not reflow around added values. LibreOffice may change pagination, fonts, or layout during this conversion. Text overlays use built-in PDF fonts with Latin character support; Hindi and other non-Latin scripts are currently rejected with an error. Text is one line per placed field, and generation reports when a value would cross the page edge. Review the generated preview and print a sample before relying on a template.
 
 ## Local data and privacy
 
-EasyDocs does not require an account or product backend. Templates, normalized rows, mappings, batch state, and outputs are stored in IndexedDB in this browser. Old batches and templates are removed after seven days. Use **Delete all local data** to clear everything immediately. Browser storage quotas vary by browser and device; keep batches modest and download results before clearing site data.
+EasyDocs does not require an account or product backend. Templates, normalized rows, mappings, batch state, and outputs are stored in IndexedDB in this browser. Batches and templates older than seven days are removed when the app opens. Use **Delete all local data** to clear everything immediately. Browser storage quotas vary by browser and device; keep batches modest and download results before clearing site data.
 
 The converter runtime is served by this application from its installed package. The application does not send files to analytics, Google Sheets, Gmail, or a document-conversion service. Network requests are limited to loading the app and its same-origin static/runtime assets.
 
